@@ -144,7 +144,7 @@ function parseUnits(raw: string): Array<{ oid: number; name: string }> {
   if (result.length) return result;
 
   // Pattern B: onclick="…selectUnit(X)…"
-  const re2 = /selectUnit\((\d+)\)[^>]*>[\s\S]{0,300}?<\/(?:li|a|span)/gi;
+  const re2 = /SelectUnitFromSideBar\((\d+)\)[^>]*>[\s\S]{0,300}?<\/(?:li|a|span)/gi;
   while ((m = re2.exec(html)) !== null) {
     const oid = parseInt(m[1]);
     if (seen.has(oid)) continue;
