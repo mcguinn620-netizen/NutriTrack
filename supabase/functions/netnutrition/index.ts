@@ -119,10 +119,64 @@ function extractHtml(raw: string): string {
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
     try {
       const j = JSON.parse(trimmed);
-      return j.html || j.HTML || raw;
+      if (typeof j === 'string') return j;
+      if (Array.isArray(j)) {
+        const firstHtml = j.find((v) => typeof v === 'string' && v.includes('<'));
+        if (firstHtml) return firstHtml;
+      }
+      const candidates = [j?.html, j?.HTML, j?.d, j?.result, j?.markup, j?.partial];
+      const htmlLike = candidates.find((v) => typeof v === 'string' && v.includes('<'));
+      return (htmlLike as string) || raw;
     } catch { /* not JSON */ }
   }
   return raw;
+}
+
+function parseActionEntries(
+  html: string,
+  actionNames: string[],
+): Array<{ oid: number; name: string }> {
+  const result: Array<{ oid: number; name: string }> = [];
+  const seen = new Set<number>();
+
+  // Pattern 1: actionName(123) in onclick + visible text in same node
+  for (const action of actionNames) {
+    const re = new RegExp(
+      `${action}\\((\\d+)\\)[^>]*>([\\s\\S]{0,240}?)<\\/`,
+      'gi',
+    );
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      const oid = parseInt(m[1]);
+      if (seen.has(oid)) continue;
+      const name = decode(m[2]);
+      if (name.length > 1 && name.length < 120) {
+        result.push({ oid, name });
+        seen.add(oid);
+      }
+    }
+  }
+
+  // Pattern 2: data attributes like data-unitoid / data-categoryoid
+  const attrRe = /<(?:a|button|li|div)[^>]+(?:data-(?:unit|category)oid|id="(?:unit|cat)Oid_)([^>]*)>([\s\S]{0,240}?)<\/(?:a|button|li|div)>/gi;
+  let a: RegExpExecArray | null;
+  while ((a = attrRe.exec(html)) !== null) {
+    const block = a[0];
+    const oidM =
+      block.match(/data-unitoid=["']?(\d+)/i) ||
+      block.match(/data-categoryoid=["']?(\d+)/i) ||
+      block.match(/id="(?:unit|cat)Oid_(\d+)"/i);
+    if (!oidM) continue;
+    const oid = parseInt(oidM[1]);
+    if (seen.has(oid)) continue;
+    const name = decode(a[2]);
+    if (name.length > 1 && name.length < 120) {
+      result.push({ oid, name });
+      seen.add(oid);
+    }
+  }
+
+  return result;
 }
 
 // ── Parsers ───────────────────────────────────────────────────────────────────
@@ -144,12 +198,15 @@ function parseUnits(raw: string): Array<{ oid: number; name: string }> {
   if (result.length) return result;
 
   // Pattern B: onclick="…selectUnit(X)…"
-  const re2 = /SelectUnitFromSideBar\((\d+)\)[^>]*>[\s\S]{0,300}?<\/(?:li|a|span)/gi;
-  while ((m = re2.exec(html)) !== null) {
-    const oid = parseInt(m[1]);
-    if (seen.has(oid)) continue;
-    const name = decode(m[0].replace(/selectUnit\(\d+\)[^>]*>/i, ''));
-    if (name.length > 1 && name.length < 120) { result.push({ oid, name }); seen.add(oid); }
+  const fallback = parseActionEntries(html, [
+    'SelectUnitFromSideBar',
+    'SelectUnitFromUnitsList',
+    'selectUnit',
+  ]);
+  for (const row of fallback) {
+    if (seen.has(row.oid)) continue;
+    result.push(row);
+    seen.add(row.oid);
   }
   return result;
 }
@@ -170,13 +227,15 @@ function parseCategories(raw: string): Array<{ oid: number; name: string }> {
   }
   if (result.length) return result;
 
-  // Pattern B: selectCategory(X)
-  const re2 = /selectCategory\((\d+)\)[^>]*>[\s\S]{0,200}?<\/(?:li|a|span)/gi;
-  while ((m = re2.exec(html)) !== null) {
-    const oid = parseInt(m[1]);
-    if (seen.has(oid)) continue;
-    const name = decode(m[0].replace(/selectCategory\(\d+\)[^>]*>/i, ''));
-    if (name.length > 1 && name.length < 120) { result.push({ oid, name }); seen.add(oid); }
+  // Pattern B: onclick/data-attribute fallback
+  const fallback = parseActionEntries(html, [
+    'SelectCategoryFromCategoryList',
+    'selectCategory',
+  ]);
+  for (const row of fallback) {
+    if (seen.has(row.oid)) continue;
+    result.push(row);
+    seen.add(row.oid);
   }
   return result;
 }
@@ -221,6 +280,44 @@ function parseItems(raw: string): Array<{ oid: number; name: string; serving: st
 
     result.push({ oid, name, serving, calories });
   }
+
+  // Fallback: parse data-itemoid style cards/buttons
+  if (!result.length) {
+    const blockRe = /<(?:a|button|div|li)[^>]+(?:showItemNutrition|data-itemoid|itemOid_)[^>]*>[\s\S]{0,500}?<\/(?:a|button|div|li)>/gi;
+    let m: RegExpExecArray | null;
+    while ((m = blockRe.exec(html)) !== null) {
+      const part = m[0];
+      const oidM =
+        part.match(/showItemNutrition\((\d+)\)/i) ||
+        part.match(/data-itemoid=["']?(\d+)/i) ||
+        part.match(/id="itemOid_(\d+)"/i);
+      if (!oidM) continue;
+      const oid = parseInt(oidM[1]);
+      if (seen.has(oid)) continue;
+      seen.add(oid);
+
+      const nameM =
+        part.match(/class="[^"]*(?:item[_-]?name|name)[^"]*"[^>]*>([\s\S]*?)<\//i) ||
+        part.match(/title=["']([^"']+)["']/i);
+      const name = nameM ? decode(nameM[1]) : '';
+      if (!name) continue;
+
+      const servingM =
+        part.match(/class="[^"]*serving[^"]*"[^>]*>([\s\S]*?)<\//i) ||
+        part.match(/(\d+(?:\.\d+)?\s*(?:oz|g|cup|tbsp|tsp|piece|serving)s?)/i);
+      const calM =
+        part.match(/(\d{2,4})\s*(?:cal|kcal)/i) ||
+        part.match(/class="[^"]*calories[^"]*"[^>]*>([\s\S]*?)<\//i);
+
+      result.push({
+        oid,
+        name,
+        serving: servingM ? decode(servingM[1]) : '1 serving',
+        calories: calM ? num(decode(calM[1])) : 0,
+      });
+    }
+  }
+
   return result;
 }
 
