@@ -31,9 +31,7 @@ class ConfigManager {
 
   private createDefaultConfig(): OnSpaceConfig {
     const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey =
-      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-      process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
     let authConfig;
     let supabaseConfig;
@@ -113,10 +111,7 @@ export const createConfig = (options: CreateConfigOptions = {}): OnSpaceConfig =
   let supabaseConfig;
   if (authConfig !== false) {
     const supabaseUrl = options.supabase?.url || process.env.EXPO_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey =
-      options.supabase?.anonKey ||
-      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ||
-      process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    const supabaseAnonKey = options.supabase?.anonKey || process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseAnonKey) {
       console.warn('[Template:Config] Auth feature enabled but Supabase configuration missing, automatically disabling auth module');

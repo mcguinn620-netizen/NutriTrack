@@ -23,15 +23,15 @@ export default function BrowserTab() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}> 
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <Text style={[styles.title, { color: colors.text }]}>NetNutrition Browser</Text>
         <Text numberOfLines={1} style={[styles.urlText, { color: colors.textSecondary }]}>
           {currentUrl}
         </Text>
       </View>
 
-      <View style={[styles.controls, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}> 
+      <View style={[styles.controls, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <Pressable
           style={({ pressed }) => [styles.controlBtn, pressed && styles.controlBtnPressed]}
           onPress={() => webViewRef.current?.goBack()}
