@@ -34,6 +34,13 @@ export default function LocationsScreen() {
   const { locations, loading, error, refresh } = useLocations();
   const [refreshing, setRefreshing] = useState(false);
 
+  // TEMP DEBUG: log location payload on the tabs index screen while validating live data.
+  React.useEffect(() => {
+    if (!loading) {
+      console.log('[TEMP DEBUG] Dining locations:', locations);
+    }
+  }, [loading, locations]);
+
   const searchResults = searchQuery.trim() ? searchService.searchMeals(searchQuery) : [];
   const showingSearch = searchQuery.trim().length > 0;
 
@@ -204,6 +211,11 @@ export default function LocationsScreen() {
                 </Text>
               )}
             </View>
+            {!loading && (
+              <Text style={[styles.debugText, { color: colors.textLight }]}>
+                TEMP DEBUG: {locations.map(location => location.name).join(' • ')}
+              </Text>
+            )}
 
             {loading ? (
               <View style={styles.loadingState}>
@@ -291,6 +303,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.sm,
+  },
+  debugText: {
+    ...typography.caption,
+    marginBottom: spacing.md,
   },
   sectionTitle: { ...typography.h3, marginBottom: spacing.sm },
   sectionCount: { ...typography.bodySmall },
