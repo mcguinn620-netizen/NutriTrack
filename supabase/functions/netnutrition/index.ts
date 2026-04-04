@@ -194,26 +194,34 @@ function parseUnits(html: string): Array<{ oid: number; name: string }> {
   const result: Array<{ oid: number; name: string }> = [];
   const seen = new Set<number>();
 
-  // Patterns from CBORD_NN_UI.js function names
-  const fnPatterns = [
-    'unitsSelectUnit',
-    'sideBarSelectUnit',
-    'unitTreeSelectUnit',
-    'childUnitsSelectUnit',
-  ];
+  // Patterns from CBORD_NN_UI.js function names.
+  // Function calls can appear in onclick and/or href attributes.
+  const fnGroup = '(?:unitsSelectUnit|sideBarSelectUnit|unitTreeSelectUnit|childUnitsSelectUnit)';
 
-  for (const fn of fnPatterns) {
-    // Match: onclick="fnName(123)" ... text content ... closing tag
-    // The text after the onclick attr might be in the same element or a child span/td
-    const re = new RegExp(
-      `${fn}\\((\\d+)\\)['"][^>]*>([\\s\\S]{1,300}?)<\\/(?:a|li|td|div|button)>`,
-      'gi',
-    );
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(html)) !== null) {
-      const oid = parseInt(m[1]);
+  // Match clickable tags that invoke one of the known unit-selection functions.
+  const re = new RegExp(
+    `<(?:a|button|li|td|div)[^>]{0,800}(?:onclick|href)\\s*=\\s*["'][^"']*${fnGroup}\\((\\d+)\\)[^"']*["'][^>]*>([\\s\\S]{1,600}?)<\\/(?:a|button|li|td|div)>`,
+    'gi',
+  );
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const oid = parseInt(m[1]);
+    if (seen.has(oid)) continue;
+    const name = decode(m[2]);
+    if (name.length > 1 && name.length < 100) {
+      result.push({ oid, name });
+      seen.add(oid);
+    }
+  }
+
+  // Secondary: id="unitOid_X" pattern (some versions use this)
+  if (result.length === 0) {
+    const re2 = /id="unitOid_(\d+)"[^>]*>([\s\S]{1,300}?)(?=id="unitOid_\d+"|<\/ul>|$)/gi;
+    let m2: RegExpExecArray | null;
+    while ((m2 = re2.exec(html)) !== null) {
+      const oid = parseInt(m2[1]);
       if (seen.has(oid)) continue;
-      const name = decode(m[2]);
+      const name = decode(m2[2]);
       if (name.length > 1 && name.length < 100) {
         result.push({ oid, name });
         seen.add(oid);
@@ -221,18 +229,15 @@ function parseUnits(html: string): Array<{ oid: number; name: string }> {
     }
   }
 
-  // Secondary: id="unitOid_X" pattern (some versions use this)
+  // Last resort: collect raw OIDs from function calls so unit flows can still proceed.
   if (result.length === 0) {
-    const re2 = /id="unitOid_(\d+)"[^>]*>([\s\S]{1,300}?)(?=id="unitOid_\d+"|<\/ul>|$)/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re2.exec(html)) !== null) {
-      const oid = parseInt(m[1]);
+    const re3 = new RegExp(`${fnGroup}\\((\\d+)\\)`, 'gi');
+    let m3: RegExpExecArray | null;
+    while ((m3 = re3.exec(html)) !== null) {
+      const oid = parseInt(m3[1]);
       if (seen.has(oid)) continue;
-      const name = decode(m[2]);
-      if (name.length > 1 && name.length < 100) {
-        result.push({ oid, name });
-        seen.add(oid);
-      }
+      result.push({ oid, name: `Unit ${oid}` });
+      seen.add(oid);
     }
   }
 
