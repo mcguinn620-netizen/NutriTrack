@@ -75,6 +75,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="browser"
+        options={{
+          title: 'Browser',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialIcons name="language" size={size} color={color} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

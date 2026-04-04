@@ -88,6 +88,7 @@ async function setCached<T>(key: string, data: T): Promise<void> {
 
 async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   const supabase = getSupabaseClient();
+  console.log('[netNutritionService.invoke] request', body);
   const { data, error } = await supabase.functions.invoke('netnutrition', { body });
 
   if (error) {
@@ -99,10 +100,15 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
         msg = `[${statusCode}] ${text || msg}`;
       } catch { /* ignore */ }
     }
+    console.error('[netNutritionService.invoke] error', { body, message: msg });
     throw new Error(msg);
   }
 
   if (data?.error) throw new Error(data.error);
+  console.log('[netNutritionService.invoke] response ok', {
+    action: body.action,
+    keys: data ? Object.keys(data) : [],
+  });
   return data as T;
 }
 
@@ -112,10 +118,14 @@ export const netNutritionService = {
   /** Fetch all active dining locations from BSU NetNutrition */
   async getLocations(): Promise<NNLocation[]> {
     const cached = await getCached<NNLocation[]>('units', TTL_MENU);
-    if (cached && cached.length > 0) return cached;
+    if (cached && cached.length > 0) {
+      console.log('[netNutritionService.getLocations] cache hit', { count: cached.length });
+      return cached;
+    }
 
     const result = await invoke<{ units: NNLocation[] }>({ action: 'units' });
     const units = result.units ?? [];
+    console.log('[netNutritionService.getLocations] fetched', { count: units.length });
     if (units.length) await setCached('units', units);
     return units;
   },
@@ -124,10 +134,14 @@ export const netNutritionService = {
   async getMenus(unitOid: number): Promise<NNMenu[]> {
     const key = `menus_${unitOid}`;
     const cached = await getCached<NNMenu[]>(key, TTL_MENU);
-    if (cached?.length) return cached;
+    if (cached?.length) {
+      console.log('[netNutritionService.getMenus] cache hit', { unitOid, count: cached.length });
+      return cached;
+    }
 
     const result = await invoke<{ menus: NNMenu[] }>({ action: 'menus', unitOid });
     const menus = result.menus ?? [];
+    console.log('[netNutritionService.getMenus] fetched', { unitOid, count: menus.length });
     if (menus.length) await setCached(key, menus);
     return menus;
   },
@@ -136,7 +150,14 @@ export const netNutritionService = {
   async getCourses(unitOid: number, menuOid: number): Promise<NNCourse[]> {
     const key = `courses_${unitOid}_${menuOid}`;
     const cached = await getCached<NNCourse[]>(key, TTL_MENU);
-    if (cached?.length) return cached;
+    if (cached?.length) {
+      console.log('[netNutritionService.getCourses] cache hit', {
+        unitOid,
+        menuOid,
+        count: cached.length,
+      });
+      return cached;
+    }
 
     const result = await invoke<{ courses: NNCourse[] }>({
       action: 'courses',
@@ -144,6 +165,7 @@ export const netNutritionService = {
       menuOid,
     });
     const courses = result.courses ?? [];
+    console.log('[netNutritionService.getCourses] fetched', { unitOid, menuOid, count: courses.length });
     if (courses.length) await setCached(key, courses);
     return courses;
   },
@@ -156,7 +178,15 @@ export const netNutritionService = {
   ): Promise<NNItem[]> {
     const key = `items_${unitOid}_${menuOid}_${courseOid ?? 'all'}`;
     const cached = await getCached<NNItem[]>(key, TTL_MENU);
-    if (cached?.length) return cached;
+    if (cached?.length) {
+      console.log('[netNutritionService.getItems] cache hit', {
+        unitOid,
+        menuOid,
+        courseOid: courseOid ?? null,
+        count: cached.length,
+      });
+      return cached;
+    }
 
     const result = await invoke<{ items: NNItem[] }>({
       action: 'items',
@@ -165,6 +195,12 @@ export const netNutritionService = {
       ...(courseOid ? { courseOid } : {}),
     });
     const items = result.items ?? [];
+    console.log('[netNutritionService.getItems] fetched', {
+      unitOid,
+      menuOid,
+      courseOid: courseOid ?? null,
+      count: items.length,
+    });
     if (items.length) await setCached(key, items);
     return items;
   },
@@ -173,7 +209,10 @@ export const netNutritionService = {
   async getNutrition(itemOid: number, menuOid?: number): Promise<NNNutrition> {
     const key = `nutr_${itemOid}`;
     const cached = await getCached<NNNutrition>(key, TTL_NUTRITION);
-    if (cached) return cached;
+    if (cached) {
+      console.log('[netNutritionService.getNutrition] cache hit', { itemOid, menuOid: menuOid ?? null });
+      return cached;
+    }
 
     const result = await invoke<{ nutrition: NNNutrition }>({
       action: 'nutrition',
@@ -181,6 +220,11 @@ export const netNutritionService = {
       ...(menuOid ? { menuOid } : {}),
     });
     const nutrition = result.nutrition ?? {};
+    console.log('[netNutritionService.getNutrition] fetched', {
+      itemOid,
+      menuOid: menuOid ?? null,
+      keys: Object.keys(nutrition),
+    });
     await setCached(key, nutrition);
     return nutrition as NNNutrition;
   },
@@ -190,6 +234,7 @@ export const netNutritionService = {
     try {
       const keys = await AsyncStorage.getAllKeys();
       const toRemove = keys.filter((k) => k.startsWith(CACHE_PREFIX));
+      console.log('[netNutritionService.clearCache] clearing keys', { count: toRemove.length });
       if (toRemove.length) await AsyncStorage.multiRemove(toRemove);
     } catch { /* ignore */ }
   },

@@ -30,14 +30,17 @@ export function useLocations() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async (forceRefresh = false) => {
+    console.log('[useLocations] load start', { forceRefresh });
     setLoading(true);
     setError(null);
     try {
       if (forceRefresh) await netNutritionService.clearCache();
       const data = await netNutritionService.getLocations();
+      console.log('[useLocations] load success', { count: data.length });
       if (data.length > 0) {
         setLocations(data);
       } else {
+        console.warn('[useLocations] empty live payload, using fallback');
         setLocations(FALLBACK_LOCATIONS);
         setError('Live data unavailable — showing cached locations');
       }
@@ -67,12 +70,15 @@ export function useMenus(unitOid: number | null) {
 
   const load = useCallback(async () => {
     if (!unitOid || unitOid < 0) return;
+    console.log('[useMenus] load start', { unitOid });
     setLoading(true);
     setError(null);
     try {
       const data = await netNutritionService.getMenus(unitOid);
+      console.log('[useMenus] load success', { unitOid, count: data.length });
       setMenus(data);
     } catch (e) {
+      console.error('[useMenus] load failed', { unitOid, error: e });
       setError(e instanceof Error ? e.message : 'Failed to load menus');
     } finally {
       setLoading(false);
@@ -95,12 +101,15 @@ export function useCourses(unitOid: number | null, menuOid: number | null) {
 
   const load = useCallback(async () => {
     if (!unitOid || !menuOid || unitOid < 0) return;
+    console.log('[useCourses] load start', { unitOid, menuOid });
     setLoading(true);
     setError(null);
     try {
       const data = await netNutritionService.getCourses(unitOid, menuOid);
+      console.log('[useCourses] load success', { unitOid, menuOid, count: data.length });
       setCourses(data);
     } catch (e) {
+      console.error('[useCourses] load failed', { unitOid, menuOid, error: e });
       setError(e instanceof Error ? e.message : 'Failed to load courses');
     } finally {
       setLoading(false);
@@ -127,6 +136,7 @@ export function useItems(
 
   const load = useCallback(async () => {
     if (!unitOid || !menuOid || unitOid < 0) return;
+    console.log('[useItems] load start', { unitOid, menuOid, courseOid: courseOid ?? null });
     setLoading(true);
     setError(null);
     setItems([]);
@@ -136,8 +146,15 @@ export function useItems(
         menuOid,
         courseOid ?? undefined,
       );
+      console.log('[useItems] load success', {
+        unitOid,
+        menuOid,
+        courseOid: courseOid ?? null,
+        count: data.length,
+      });
       setItems(data);
     } catch (e) {
+      console.error('[useItems] load failed', { unitOid, menuOid, courseOid, error: e });
       setError(e instanceof Error ? e.message : 'Failed to load items');
     } finally {
       setLoading(false);
@@ -164,9 +181,16 @@ export function useNutrition() {
       setError(null);
       setNutrition(null);
       try {
+        console.log('[useNutrition] load start', { itemOid, menuOid: menuOid ?? null });
         const data = await netNutritionService.getNutrition(itemOid, menuOid);
+        console.log('[useNutrition] load success', {
+          itemOid,
+          menuOid: menuOid ?? null,
+          hasCalories: typeof data?.calories === 'number',
+        });
         setNutrition(data);
       } catch (e) {
+        console.error('[useNutrition] load failed', { itemOid, menuOid, error: e });
         setError(e instanceof Error ? e.message : 'Failed to load nutrition');
       } finally {
         setLoading(false);
