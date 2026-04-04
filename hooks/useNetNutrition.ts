@@ -41,9 +41,11 @@ export function useLocations() {
         setLocations(FALLBACK_LOCATIONS);
         setError('Live data unavailable — showing cached locations');
       }
-    } catch {
+    } catch (e) {
+      console.error('[NetNutrition] Failed to load live locations:', e);
       setLocations(FALLBACK_LOCATIONS);
-      setError('Could not reach BSU NetNutrition — showing cached locations');
+      const detail = e instanceof Error ? ` (${e.message})` : '';
+      setError(`Could not reach BSU NetNutrition${detail} — showing cached locations`);
     } finally {
       setLoading(false);
     }
