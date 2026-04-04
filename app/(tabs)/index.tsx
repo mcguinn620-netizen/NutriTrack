@@ -33,13 +33,17 @@ export default function LocationsScreen() {
 
   const { locations, loading, error, refresh } = useLocations();
   const [refreshing, setRefreshing] = useState(false);
+  const debugSource = locations.some(location => location.oid < 0) ? 'mock-fallback' : 'netnutrition';
 
   // TEMP DEBUG: log location payload on the tabs index screen while validating live data.
   React.useEffect(() => {
     if (!loading) {
-      console.log('[TEMP DEBUG] Dining locations:', locations);
+      console.log('[TEMP DEBUG] Dining locations:', {
+        source: debugSource,
+        locations,
+      });
     }
-  }, [loading, locations]);
+  }, [loading, locations, debugSource]);
 
   const searchResults = searchQuery.trim() ? searchService.searchMeals(searchQuery) : [];
   const showingSearch = searchQuery.trim().length > 0;
@@ -213,7 +217,7 @@ export default function LocationsScreen() {
             </View>
             {!loading && (
               <Text style={[styles.debugText, { color: colors.textLight }]}>
-                TEMP DEBUG: {locations.map(location => location.name).join(' • ')}
+                TEMP DEBUG [{debugSource}]: {locations.map(location => `${location.name} (oid:${location.oid})`).join(' • ')}
               </Text>
             )}
 
