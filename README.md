@@ -35,6 +35,31 @@ npm run reset-project
 npm run lint
 ```
 
+## Supabase setup (required for Edge Functions)
+
+1. Copy env template and set your project values:
+
+```bash
+cp .env.example .env
+```
+
+2. In `.env`, set:
+
+- `EXPO_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co`
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-or-publishable-key>`
+
+`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` is also supported as a fallback if you prefer Supabase's newer key naming.
+
+3. Link and deploy the Edge Function:
+
+```bash
+supabase login
+supabase link --project-ref <your-project-ref>
+supabase functions deploy netnutrition --no-verify-jwt
+```
+
+> This repo includes `supabase/functions/netnutrition/config.toml` with `verify_jwt = false` so the app can invoke the function without a signed-in user session.
+
 ## Main Dependencies
 
 - React Native: 0.79.4
