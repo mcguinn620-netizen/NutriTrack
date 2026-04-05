@@ -10,14 +10,14 @@ import { MacroCard } from '@/components/ui/MacroCard';
 import { useAlert } from '@/template';
 import { DailyGoals } from '@/services/storage';
 
-const MEAL_TIMES: Array<'Breakfast' | 'Lunch' | 'Dinner' | 'Snacks'> = [
+const MEAL_TIMES: ('Breakfast' | 'Lunch' | 'Dinner' | 'Snacks')[] = [
   'Breakfast',
   'Lunch',
   'Dinner',
   'Snacks',
 ];
 
-const THEME_OPTIONS: Array<{ mode: ThemeMode; label: string; icon: string }> = [
+const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: string }[] = [
   { mode: 'light', label: 'Light', icon: 'wb-sunny' },
   { mode: 'dark', label: 'Dark', icon: 'nights-stay' },
   { mode: 'system', label: 'System', icon: 'settings-brightness' },
