@@ -22,7 +22,7 @@ interface NutritionDetailsModalProps {
   onAddMeal: (meal: LoggedMeal) => void;
 }
 
-const MEAL_TIMES: Array<'Breakfast' | 'Lunch' | 'Dinner' | 'Snacks'> = [
+const MEAL_TIMES: ('Breakfast' | 'Lunch' | 'Dinner' | 'Snacks')[] = [
   'Breakfast',
   'Lunch',
   'Dinner',

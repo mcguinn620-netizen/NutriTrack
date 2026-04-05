@@ -15,7 +15,7 @@ import { LoggedMeal } from '@/services/storage';
 export default function FavoritesScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const { favorites, toggleFavorite, isFavorite } = useFavorites();
+  const { toggleFavorite, isFavorite } = useFavorites();
   const today = new Date().toISOString().split('T')[0];
   const { addMeal } = useDailyLog(today);
   const { customMeals } = useCustomMeals();
