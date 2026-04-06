@@ -60,6 +60,17 @@ supabase functions deploy netnutrition --no-verify-jwt
 
 > This repo includes `supabase/functions/netnutrition/config.toml` with `verify_jwt = false` so the app can invoke the function without a signed-in user session.
 
+4. Smoke test the deployed function:
+
+```bash
+curl -sS -D /tmp/nn_headers.txt \
+  -o /tmp/nn_body.json \
+  -X POST \
+  "https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition" \
+  -H "Content-Type: application/json" \
+  -H "apikey: $EXPO_PUBLIC_SUPABASE_KEY"
+```
+
 ## Main Dependencies
 
 - React Native: 0.79.4
