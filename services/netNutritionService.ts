@@ -92,6 +92,7 @@ interface NNScrapedUnit {
 interface NNScrapePayload {
   units: NNScrapedUnit[];
   generatedAt?: string;
+  sourceUrl?: string;
 }
 
 // ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -149,6 +150,10 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 async function invokeDirectFetch<T>(body: Record<string, unknown>): Promise<T> {
+  console.log('[netNutritionService.invokeDirectFetch] request', {
+    url: NETNUTRITION_FUNCTION_URL,
+    body,
+  });
   const response = await fetch(NETNUTRITION_FUNCTION_URL, {
     method: 'POST',
     headers: {
@@ -160,27 +165,50 @@ async function invokeDirectFetch<T>(body: Record<string, unknown>): Promise<T> {
 
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
+  console.log('[netNutritionService.invokeDirectFetch] response', {
+    status: response.status,
+    ok: response.ok,
+    keys: json && typeof json === 'object' ? Object.keys(json as Record<string, unknown>) : [],
+  });
   if (!response.ok || json?.error) {
     throw new Error(json?.error || `[${response.status}] ${text}`);
   }
   return json as T;
 }
 
+function normalizeScrapePayload(payload: unknown): NNScrapePayload {
+  const obj = (payload && typeof payload === 'object') ? payload as Record<string, unknown> : {};
+  const units = Array.isArray(obj.units) ? obj.units : [];
+  return {
+    units: units as NNScrapedUnit[],
+    generatedAt: typeof obj.generatedAt === 'string' ? obj.generatedAt : undefined,
+    sourceUrl: typeof obj.sourceUrl === 'string' ? obj.sourceUrl : undefined,
+  };
+}
+
 async function loadScrapedPayload(): Promise<NNScrapePayload> {
   const cached = await getCached<NNScrapePayload>(SCRAPE_CACHE_KEY, TTL_MENU);
   if (cached?.units?.length) return cached;
 
-  let payload: NNScrapePayload = await invokeDirectFetch<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL });
+  let payload = normalizeScrapePayload(
+    await invokeDirectFetch<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL }),
+  );
 
   if (!payload?.units?.length) {
     try {
-      payload = await invoke<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL });
+      payload = normalizeScrapePayload(
+        await invoke<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL }),
+      );
     } catch (err) {
       console.warn('[netNutritionService] fallback invoke failed', err);
     }
   }
 
   if (!payload?.units) payload = { units: [] };
+  console.log('[netNutritionService.loadScrapedPayload] payload ready', {
+    units: payload.units.length,
+    generatedAt: payload.generatedAt,
+  });
   await setCached(SCRAPE_CACHE_KEY, payload);
   return payload;
 }
