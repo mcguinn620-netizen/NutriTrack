@@ -1,0 +1,8 @@
+# Supabase CLI project configuration
+# Declare Edge Functions here so branch deployments can auto-deploy them.
+
+[functions.netnutrition]
+verify_jwt = false
+
+[functions.menu]
+verify_jwt = false
