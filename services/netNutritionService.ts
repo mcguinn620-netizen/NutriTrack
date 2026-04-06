@@ -18,6 +18,9 @@ const CACHE_PREFIX = '@nn_v3_';
 const TTL_MENU = 30 * 60 * 1000;           // 30 min — locations, menus, courses, items
 const TTL_NUTRITION = 24 * 60 * 60 * 1000; // 24 h  — nutrition facts
 const SCRAPE_CACHE_KEY = 'scrape_payload';
+const NETNUTRITION_SOURCE_URL = 'http://netnutrition.bsu.edu/NetNutrition/1#';
+const NETNUTRITION_FUNCTION_URL = 'https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition';
+const NETNUTRITION_PUBLISHABLE_KEY = 'sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -68,6 +71,7 @@ interface NNScrapedItem {
   oid: number;
   name: string;
   traits?: NNTrait[];
+  nutrition?: Record<string, string>;
   nutritionLabel?: Record<string, string>;
   nutritionGrid?: Record<string, string>;
 }
@@ -145,22 +149,11 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 async function invokeDirectFetch<T>(body: Record<string, unknown>): Promise<T> {
-  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-  const supabaseKey =
-    process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseKey) {
-    throw new Error('Missing EXPO_PUBLIC_SUPABASE_URL and/or publishable key for direct invoke.');
-  }
-
-  const endpoint = `${supabaseUrl}/functions/v1/netnutrition`;
-  const response = await fetch(endpoint, {
+  const response = await fetch(NETNUTRITION_FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      apikey: supabaseKey,
-      Authorization: `Bearer ${supabaseKey}`,
+      apikey: NETNUTRITION_PUBLISHABLE_KEY,
     },
     body: JSON.stringify(body),
   });
@@ -177,12 +170,14 @@ async function loadScrapedPayload(): Promise<NNScrapePayload> {
   const cached = await getCached<NNScrapePayload>(SCRAPE_CACHE_KEY, TTL_MENU);
   if (cached?.units?.length) return cached;
 
-  let payload: NNScrapePayload;
-  try {
-    payload = await invoke<NNScrapePayload>({ action: 'scrape' });
-  } catch (err) {
-    console.warn('[netNutritionService] supabase.functions.invoke failed; using direct fetch', err);
-    payload = await invokeDirectFetch<NNScrapePayload>({ action: 'scrape' });
+  let payload: NNScrapePayload = await invokeDirectFetch<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL });
+
+  if (!payload?.units?.length) {
+    try {
+      payload = await invoke<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL });
+    } catch (err) {
+      console.warn('[netNutritionService] fallback invoke failed', err);
+    }
   }
 
   if (!payload?.units) payload = { units: [] };
@@ -280,8 +275,8 @@ export const netNutritionService = {
       .map((item) => ({
         oid: item.oid,
         name: item.name,
-        serving: item.nutritionLabel?.['Serving Size'] ?? '1 serving',
-        calories: Number(item.nutritionLabel?.Calories ?? 0),
+        serving: item.nutrition?.['Serving Size'] ?? item.nutritionLabel?.['Serving Size'] ?? '1 serving',
+        calories: Number(item.nutrition?.Calories ?? item.nutritionLabel?.Calories ?? 0),
       }));
     console.log('[netNutritionService.getItems] fetched', {
       unitOid,
@@ -307,7 +302,7 @@ export const netNutritionService = {
       .flatMap((unit) => unit.menus ?? [])
       .flatMap((menu) => menu.items ?? []);
     const item = allItems.find((entry) => entry.oid === itemOid);
-    const label = item?.nutritionLabel ?? {};
+    const label = item?.nutrition ?? item?.nutritionLabel ?? {};
     const nutrition: Partial<NNNutrition> = {
       servingSize: label['Serving Size'] ?? '1 serving',
       calories: Number(label['Calories'] ?? 0),

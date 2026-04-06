@@ -45,10 +45,9 @@ cp .env.example .env
 
 2. In `.env`, set:
 
-- `EXPO_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co`
-- `EXPO_PUBLIC_SUPABASE_ANON_KEY=<your-anon-or-publishable-key>`
-
-`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` is also supported as a fallback if you prefer Supabase's newer key naming.
+- `EXPO_PUBLIC_SUPABASE_URL=https://upjotaeatvessmbrorgx.supabase.co`
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di`
+- `EXPO_PUBLIC_SUPABASE_ANON_KEY` may also be used (the app accepts either key name).
 
 3. Link and deploy the Edge Function:
 
@@ -70,7 +69,7 @@ curl -sS -D /tmp/nn_headers.txt \
   -H "Content-Type: application/json" \
   -H "apikey: $EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
   -H "Authorization: Bearer $EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
-  --data '{"action":"scrape"}'
+  --data '{"url":"http://netnutrition.bsu.edu/NetNutrition/1#"}'
 
 # Parse result shape (units -> menus -> items -> traits -> nutrition)
 jq '.units[0].menus[0].items[0]' /tmp/nn_body.json
