@@ -59,7 +59,7 @@ function parseUnits(html: string) {
   const out: Array<{ id: string; name: string }> = []; const seen = new Set<string>();
   for (const el of Array.from(doc.querySelectorAll('a, button, li, div'))) {
     const raw = `${el.getAttribute('onclick') ?? ''} ${el.getAttribute('href') ?? ''}`;
-    const m = raw.match(/(?:sideBarSelectUnit|unitsSelectUnit|unitTreeSelectUnit)\((\d+)\)/i); if (!m) continue;
+    const m = raw.match(/(?:sideBarSelectUnit|unitsSelectUnit|unitTreeSelectUnit|childUnitsSelectUnit)\((\d+)\)/i); if (!m) continue;
     const id = m[1]; if (seen.has(id)) continue; const name = stripText(el.textContent); if (!name) continue;
     seen.add(id); out.push({ id, name });
   }
@@ -83,6 +83,13 @@ function parseMenus(html: string) {
     const id = m[1]; if (seen.has(id)) continue; const name = stripText(el.textContent); if (!name) continue;
     seen.add(id); out.push({ id, name });
   }
+  if (out.length) return out;
+  // Fallback for variants where menu handlers are embedded in attributes only.
+  for (const m of html.matchAll(/menuListSelectMenu\((\d+)\)[\s\S]{0,240}?>\s*([^<][\s\S]{0,120}?)\s*</gi)) {
+    const id = m[1]; if (seen.has(id)) continue;
+    const name = stripText(m[2]); if (!name) continue;
+    seen.add(id); out.push({ id, name });
+  }
   return out;
 }
 function parseItems(html: string) {
@@ -94,13 +101,31 @@ function parseItems(html: string) {
     const name = stripText(nameEl?.textContent); if (!name || /^\d+$/.test(name)) continue;
     seen.add(id); out.push({ id, name });
   }
+  if (out.length) return out;
+  // Fallback for row structure keyed by checkbox IDs.
+  for (const row of Array.from(doc.querySelectorAll('tr'))) {
+    const cb = row.querySelector('input[id^="cbm"]') as any;
+    const id = cb?.getAttribute('id')?.replace(/^cbm/, '');
+    if (!id || seen.has(id)) continue;
+    const name = stripText((row.querySelector('.cbo_nn_itemPrimaryName') as any)?.textContent ?? (row.querySelector('a') as any)?.textContent ?? row.textContent);
+    if (!name || /^\d+$/.test(name)) continue;
+    seen.add(id); out.push({ id, name });
+  }
   return out;
 }
 
 function parsePanelResponse(text: string): { panelType: 'childUnitsPanel' | 'menuPanel' | 'itemPanel' | 'unknown'; html: string; mergedHtml: string } {
   const trimmed = text.trim(); if (!trimmed) return { panelType: 'unknown', html: '', mergedHtml: '' };
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    const parsed = JSON.parse(trimmed) as { panels?: Array<{ id: string; html: string }> };
+    let parsed: { panels?: Array<{ id: string; html: string }>; success?: boolean; errorHTML?: string };
+    try {
+      parsed = JSON.parse(trimmed) as { panels?: Array<{ id: string; html: string }>; success?: boolean; errorHTML?: string };
+    } catch {
+      return { panelType: 'unknown', html: trimmed, mergedHtml: trimmed };
+    }
+    if (parsed.success === false && parsed.errorHTML) {
+      return { panelType: 'unknown', html: parsed.errorHTML, mergedHtml: parsed.errorHTML };
+    }
     const panels = parsed.panels ?? []; const mergedHtml = panels.map((p) => p.html ?? '').join('\n'); const by = (id: string) => panels.find((p) => p.id === id)?.html ?? '';
     const child = by('childUnitsPanel') || by('childUnitPanel'); if (child) return { panelType: 'childUnitsPanel', html: child, mergedHtml };
     const menu = by('menuPanel') || by('menuListPanel'); if (menu) return { panelType: 'menuPanel', html: menu, mergedHtml };
@@ -185,7 +210,7 @@ async function scrapeAllHalls(): Promise<ScrapeHall[]> {
     let state = await client.selectUnitFromSidebar(unit.id);
     let hops = 0;
     while (state.panelType === 'childUnitsPanel' && hops++ < 20) {
-      const children = parseChildUnits(state.html || state.mergedHtml); if (!children.length) throw new Error(`No child units for ${unit.name}`);
+      const children = parseChildUnits(state.html || state.mergedHtml); if (!children.length) throw new Error(`No child units for ${unit.name}; htmlSnippet=${(state.html || state.mergedHtml).slice(0, 180)}`);
       state = await client.selectChildUnit(children[0].id);
     }
     const categories: ScrapeCategory[] = [];
