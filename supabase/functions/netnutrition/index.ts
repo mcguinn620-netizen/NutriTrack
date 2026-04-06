@@ -161,6 +161,11 @@ function getPanelHtml(panels: Map<string, string>, ...preferIds: string[]): stri
   return Array.from(panels.values()).join('\n');
 }
 
+function truncateForLog(value: string, max = 12000): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}… [truncated ${value.length - max} chars]`;
+}
+
 // ── String utilities ──────────────────────────────────────────────────────────
 
 function decode(s: string): string {
@@ -491,8 +496,13 @@ Deno.serve(async (req) => {
       if (units.length === 0) {
         console.log('[units] fallback → Unit/GetHtmlUnitEntries');
         const r = await nn_post('Unit/GetHtmlUnitEntries', { nocache: '1' }, cookie);
+        console.log(`[units] fallback raw response (len=${r.text.length}):`);
+        console.log(truncateForLog(r.text));
         const panels = parseCbordResponse(r.text);
+        console.log('[units] fallback panel ids:', Array.from(panels.keys()));
         const panelHtml = getPanelHtml(panels, 'unitsList', 'sideUnitPanel', '__raw__');
+        console.log(`[units] fallback panel html (len=${panelHtml.length}):`);
+        console.log(truncateForLog(panelHtml));
         units = parseUnits(panelHtml);
         console.log(`[units] fallback parsed: ${units.length}`);
       }
