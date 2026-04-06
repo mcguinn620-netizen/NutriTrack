@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, typography } from '@/constants/theme';
 
-const NET_NUTRITION_URL = 'http://netnutrition.bsu.edu/NetNutrition/1';
+const NET_NUTRITION_URL = 'http://netnutrition.bsu.edu/NetNutrition/1#';
 
 export default function BrowserTab() {
   const { colors } = useTheme();
