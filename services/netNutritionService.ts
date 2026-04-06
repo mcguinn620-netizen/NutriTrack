@@ -20,7 +20,6 @@ const TTL_NUTRITION = 24 * 60 * 60 * 1000; // 24 h  — nutrition facts
 const SCRAPE_CACHE_KEY = 'scrape_payload';
 const NETNUTRITION_SOURCE_URL = 'http://netnutrition.bsu.edu/NetNutrition/1#';
 const NETNUTRITION_FUNCTION_URL = 'https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition';
-const NETNUTRITION_PUBLISHABLE_KEY = 'sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -150,18 +149,14 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 async function invokeDirectFetch<T>(body: Record<string, unknown>): Promise<T> {
+  const requestUrl = new URL(NETNUTRITION_FUNCTION_URL);
+  if (typeof body.url === 'string' && body.url.trim().length) {
+    requestUrl.searchParams.set('url', body.url);
+  }
   console.log('[netNutritionService.invokeDirectFetch] request', {
-    url: NETNUTRITION_FUNCTION_URL,
-    body,
+    url: requestUrl.toString(),
   });
-  const response = await fetch(NETNUTRITION_FUNCTION_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      apikey: NETNUTRITION_PUBLISHABLE_KEY,
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await fetch(requestUrl.toString());
 
   const text = await response.text();
   const json = text ? JSON.parse(text) : {};
