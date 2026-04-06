@@ -190,14 +190,16 @@ async function loadScrapedPayload(): Promise<NNScrapePayload> {
   const cached = await getCached<NNScrapePayload>(SCRAPE_CACHE_KEY, TTL_MENU);
   if (cached?.units?.length) return cached;
 
+  const requestBody = { url: NETNUTRITION_SOURCE_URL };
+
   let payload = normalizeScrapePayload(
-    await invokeDirectFetch<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL }),
+    await invokeDirectFetch<NNScrapePayload>(requestBody),
   );
 
   if (!payload?.units?.length) {
     try {
       payload = normalizeScrapePayload(
-        await invoke<NNScrapePayload>({ url: NETNUTRITION_SOURCE_URL }),
+        await invoke<NNScrapePayload>(requestBody),
       );
     } catch (err) {
       console.warn('[netNutritionService] fallback invoke failed', err);
