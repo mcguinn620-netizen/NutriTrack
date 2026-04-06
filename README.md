@@ -68,7 +68,12 @@ curl -sS -D /tmp/nn_headers.txt \
   -X POST \
   "https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition" \
   -H "Content-Type: application/json" \
-  -H "apikey: $EXPO_PUBLIC_SUPABASE_KEY"
+  -H "apikey: $EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
+  -H "Authorization: Bearer $EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
+  --data '{"action":"scrape"}'
+
+# Parse result shape (units -> menus -> items -> traits -> nutrition)
+jq '.units[0].menus[0].items[0]' /tmp/nn_body.json
 ```
 
 ## Main Dependencies

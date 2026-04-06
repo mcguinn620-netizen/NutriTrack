@@ -17,6 +17,7 @@ import { FunctionsHttpError } from '@supabase/supabase-js';
 const CACHE_PREFIX = '@nn_v3_';
 const TTL_MENU = 30 * 60 * 1000;           // 30 min — locations, menus, courses, items
 const TTL_NUTRITION = 24 * 60 * 60 * 1000; // 24 h  — nutrition facts
+const SCRAPE_CACHE_KEY = 'scrape_payload';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -56,6 +57,37 @@ export interface NNNutrition {
   sodium: number;
   fiber: number;
   sugar: number;
+}
+
+interface NNTrait {
+  oid: number;
+  name: string;
+}
+
+interface NNScrapedItem {
+  oid: number;
+  name: string;
+  traits?: NNTrait[];
+  nutritionLabel?: Record<string, string>;
+  nutritionGrid?: Record<string, string>;
+}
+
+interface NNScrapedMenu {
+  oid: number;
+  name: string;
+  items?: NNScrapedItem[];
+}
+
+interface NNScrapedUnit {
+  oid: number;
+  name: string;
+  source?: 'unit' | 'child-unit';
+  menus?: NNScrapedMenu[];
+}
+
+interface NNScrapePayload {
+  units: NNScrapedUnit[];
+  generatedAt?: string;
 }
 
 // ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -112,6 +144,52 @@ async function invoke<T>(body: Record<string, unknown>): Promise<T> {
   return data as T;
 }
 
+async function invokeDirectFetch<T>(body: Record<string, unknown>): Promise<T> {
+  const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+  const supabaseKey =
+    process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error('Missing EXPO_PUBLIC_SUPABASE_URL and/or publishable key for direct invoke.');
+  }
+
+  const endpoint = `${supabaseUrl}/functions/v1/netnutrition`;
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const text = await response.text();
+  const json = text ? JSON.parse(text) : {};
+  if (!response.ok || json?.error) {
+    throw new Error(json?.error || `[${response.status}] ${text}`);
+  }
+  return json as T;
+}
+
+async function loadScrapedPayload(): Promise<NNScrapePayload> {
+  const cached = await getCached<NNScrapePayload>(SCRAPE_CACHE_KEY, TTL_MENU);
+  if (cached?.units?.length) return cached;
+
+  let payload: NNScrapePayload;
+  try {
+    payload = await invoke<NNScrapePayload>({ action: 'scrape' });
+  } catch (err) {
+    console.warn('[netNutritionService] supabase.functions.invoke failed; using direct fetch', err);
+    payload = await invokeDirectFetch<NNScrapePayload>({ action: 'scrape' });
+  }
+
+  if (!payload?.units) payload = { units: [] };
+  await setCached(SCRAPE_CACHE_KEY, payload);
+  return payload;
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export const netNutritionService = {
@@ -123,8 +201,8 @@ export const netNutritionService = {
       return cached;
     }
 
-    const result = await invoke<{ units: NNLocation[] }>({ action: 'units' });
-    const units = result.units ?? [];
+    const result = await loadScrapedPayload();
+    const units = (result.units ?? []).map((unit) => ({ oid: unit.oid, name: unit.name }));
     console.log('[netNutritionService.getLocations] fetched', { count: units.length });
     if (units.length) await setCached('units', units);
     return units;
@@ -139,8 +217,9 @@ export const netNutritionService = {
       return cached;
     }
 
-    const result = await invoke<{ menus: NNMenu[] }>({ action: 'menus', unitOid });
-    const menus = result.menus ?? [];
+    const result = await loadScrapedPayload();
+    const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
+    const menus = (unit?.menus ?? []).map((menu) => ({ oid: menu.oid, name: menu.name }));
     console.log('[netNutritionService.getMenus] fetched', { unitOid, count: menus.length });
     if (menus.length) await setCached(key, menus);
     return menus;
@@ -159,12 +238,14 @@ export const netNutritionService = {
       return cached;
     }
 
-    const result = await invoke<{ courses: NNCourse[] }>({
-      action: 'courses',
-      unitOid,
-      menuOid,
-    });
-    const courses = result.courses ?? [];
+    const result = await loadScrapedPayload();
+    const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
+    const menu = (unit?.menus ?? []).find((entry) => entry.oid === menuOid);
+    const traits = new Map<number, string>();
+    for (const item of menu?.items ?? []) {
+      for (const trait of item.traits ?? []) traits.set(trait.oid, trait.name);
+    }
+    const courses = Array.from(traits.entries()).map(([oid, name]) => ({ oid, name }));
     console.log('[netNutritionService.getCourses] fetched', { unitOid, menuOid, count: courses.length });
     if (courses.length) await setCached(key, courses);
     return courses;
@@ -188,13 +269,20 @@ export const netNutritionService = {
       return cached;
     }
 
-    const result = await invoke<{ items: NNItem[] }>({
-      action: 'items',
-      unitOid,
-      menuOid,
-      ...(courseOid ? { courseOid } : {}),
-    });
-    const items = result.items ?? [];
+    const result = await loadScrapedPayload();
+    const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
+    const menu = (unit?.menus ?? []).find((entry) => entry.oid === menuOid);
+    const items = (menu?.items ?? [])
+      .filter((item) => {
+        if (!courseOid) return true;
+        return (item.traits ?? []).some((trait) => trait.oid === courseOid);
+      })
+      .map((item) => ({
+        oid: item.oid,
+        name: item.name,
+        serving: item.nutritionLabel?.['Serving Size'] ?? '1 serving',
+        calories: Number(item.nutritionLabel?.Calories ?? 0),
+      }));
     console.log('[netNutritionService.getItems] fetched', {
       unitOid,
       menuOid,
@@ -214,12 +302,25 @@ export const netNutritionService = {
       return cached;
     }
 
-    const result = await invoke<{ nutrition: NNNutrition }>({
-      action: 'nutrition',
-      itemOid,
-      ...(menuOid ? { menuOid } : {}),
-    });
-    const nutrition = result.nutrition ?? {};
+    const result = await loadScrapedPayload();
+    const allItems = (result.units ?? [])
+      .flatMap((unit) => unit.menus ?? [])
+      .flatMap((menu) => menu.items ?? []);
+    const item = allItems.find((entry) => entry.oid === itemOid);
+    const label = item?.nutritionLabel ?? {};
+    const nutrition: Partial<NNNutrition> = {
+      servingSize: label['Serving Size'] ?? '1 serving',
+      calories: Number(label['Calories'] ?? 0),
+      fat: Number(label['Total Fat'] ?? 0),
+      saturatedFat: Number(label['Saturated Fat'] ?? 0),
+      transFat: Number(label['Trans Fat'] ?? 0),
+      cholesterol: Number(label['Cholesterol'] ?? 0),
+      sodium: Number(label['Sodium'] ?? 0),
+      carbs: Number(label['Total Carbohydrate'] ?? 0),
+      fiber: Number(label['Dietary Fiber'] ?? 0),
+      sugar: Number(label['Total Sugars'] ?? 0),
+      protein: Number(label['Protein'] ?? 0),
+    };
     console.log('[netNutritionService.getNutrition] fetched', {
       itemOid,
       menuOid: menuOid ?? null,
