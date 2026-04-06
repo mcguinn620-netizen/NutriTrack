@@ -1,6 +1,6 @@
 import { corsHeaders } from '../_shared/cors.ts';
 
-const DEFAULT_VERCEL_SCRAPER_URL = 'https://your-vercel-app.vercel.app/api';
+const VERCEL_URL = 'https://nutri-track-ebon-psi.vercel.app/api/scrape';
 const REQUEST_TIMEOUT_MS = 60_000;
 
 function json(payload: unknown, status = 200): Response {
@@ -13,7 +13,11 @@ function json(payload: unknown, status = 200): Response {
   });
 }
 
-async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs = REQUEST_TIMEOUT_MS,
+): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -46,15 +50,12 @@ Deno.serve(async (req) => {
       return json({ error: 'Invalid URL. Use an absolute http/https URL.' }, 400);
     }
 
-    const vercelScraperUrl =
-      Deno.env.get('VERCEL_SCRAPER_URL')?.trim() || DEFAULT_VERCEL_SCRAPER_URL;
-
-    console.log('[netnutrition] Proxying request', {
-      target: vercelScraperUrl,
+    console.log('[netnutrition] Forwarding request to Vercel scraper', {
+      upstream: VERCEL_URL,
       sourceUrl: requestedUrl,
     });
 
-    const upstreamResponse = await fetchWithTimeout(vercelScraperUrl, {
+    const upstreamResponse = await fetchWithTimeout(VERCEL_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -63,34 +64,37 @@ Deno.serve(async (req) => {
     });
 
     const upstreamText = await upstreamResponse.text();
-    let upstreamJson: unknown;
+    let upstreamBody: unknown;
 
     try {
-      upstreamJson = upstreamText ? JSON.parse(upstreamText) : {};
+      upstreamBody = upstreamText ? JSON.parse(upstreamText) : {};
     } catch {
-      upstreamJson = { raw: upstreamText };
+      upstreamBody = { raw: upstreamText };
     }
 
     if (!upstreamResponse.ok) {
-      console.error('[netnutrition] Upstream scraper failed', {
+      console.error('[netnutrition] Upstream Vercel error', {
+        upstream: VERCEL_URL,
         status: upstreamResponse.status,
-        body: upstreamJson,
+        statusText: upstreamResponse.statusText,
+        body: upstreamBody,
       });
+
       return json(
         {
           error: 'Failed to fetch from Vercel scraper',
           upstreamStatus: upstreamResponse.status,
-          upstreamBody: upstreamJson,
+          upstreamBody,
         },
         upstreamResponse.status,
       );
     }
 
     console.log('[netnutrition] Upstream scraper success');
-    return json(upstreamJson, 200);
+    return json(upstreamBody, 200);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error('[netnutrition] Fatal proxy error', { message });
+    console.error('[netnutrition] Fatal proxy error', { message, upstream: VERCEL_URL });
     return json({ error: message }, 500);
   }
 });
