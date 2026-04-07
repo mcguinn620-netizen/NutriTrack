@@ -312,15 +312,27 @@ class NetNutritionClient {
     return parsePanelHtml(text);
   }
 
+  private async postAny(paths: string[], payload: Record<string, string>): Promise<string> {
+    let lastError: unknown = null;
+    for (const path of paths) {
+      try {
+        return await this.post(path, payload);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw new Error(`Failed all endpoint variants (${paths.join(', ')}): ${String(lastError)}`);
+  }
+
   async selectUnitFromUnitsList(unitOid: number): Promise<string> {
-    return await this.post('Unit/SelectUnitFromUnitsList', {
+    return await this.postAny(['Unit/SelectUnitFromUnitsList'], {
       unitOid: String(unitOid),
       selectedUnitOid: String(unitOid),
     });
   }
 
   async selectUnitFromChildUnitsList(unitOid: number): Promise<string> {
-    return await this.post('Unit/SelectUnitFromChildUnitsList', {
+    return await this.postAny(['Unit/SelectUnitFromChildUnitsList'], {
       unitOid: String(unitOid),
       childUnitOid: String(unitOid),
       selectedUnitOid: String(unitOid),
@@ -328,7 +340,7 @@ class NetNutritionClient {
   }
 
   async selectMenu(menuOid: number): Promise<string> {
-    return await this.post('Menu/SelectMenu', {
+    return await this.postAny(['Menu/SelectMenu'], {
       menuOid: String(menuOid),
       selectedMenuOid: String(menuOid),
     });
@@ -337,25 +349,31 @@ class NetNutritionClient {
   async selectItem(detailOid: number, menuOid?: number): Promise<string> {
     const data: Record<string, string> = { detailOid: String(detailOid) };
     if (menuOid) data.menuOid = String(menuOid);
-    return await this.post('Menu/SelectItem', data);
+    return await this.postAny(['SelectItem', 'Menu/SelectItem'], data);
   }
 
   async selectTrait(traitOid: number, menuOid?: number): Promise<string> {
     const data: Record<string, string> = { traitOid: String(traitOid) };
     if (menuOid) data.menuOid = String(menuOid);
-    return await this.post('Menu/SelectTrait', data);
+    return await this.postAny(['SelectTrait', 'Menu/SelectTrait'], data);
   }
 
   async showItemNutritionLabel(detailOid: number, menuOid?: number): Promise<string> {
     const data: Record<string, string> = { detailOid: String(detailOid) };
     if (menuOid) data.menuOid = String(menuOid);
-    return await this.post('NutritionDetail/ShowItemNutritionLabel', data);
+    return await this.postAny(
+      ['ShowItemNutritionLabel', 'NutritionDetail/ShowItemNutritionLabel', 'Menu/ShowItemNutritionLabel'],
+      data,
+    );
   }
 
   async showMenuDetailNutritionGrid(menuOid: number, detailOid?: number): Promise<string> {
     const data: Record<string, string> = { menuOid: String(menuOid) };
     if (detailOid) data.detailOid = String(detailOid);
-    return await this.post('NutritionDetail/ShowMenuDetailNutritionGrid', data);
+    return await this.postAny(
+      ['ShowMenuDetailNutritionGrid', 'NutritionDetail/ShowMenuDetailNutritionGrid', 'Menu/ShowMenuDetailNutritionGrid'],
+      data,
+    );
   }
 }
 
