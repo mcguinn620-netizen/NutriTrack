@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node index.js",
-    "postinstall": "playwright install chromium"
+    "postinstall": "npx playwright install chromium"
   },
   "dependencies": {
     "express": "^4.21.2",

@@ -1,67 +1,85 @@
-// scraper-render/index.js
 import express from 'express';
-import { chromium } from 'playwright';
+import { scrapeNetNutrition } from './utils/parser.js';
 
 const app = express();
-const PORT = process.env.PORT || 9999;
+const PORT = Number(process.env.PORT || 10000);
+const BASE_PATH = '/netnutrition';
+const SCRAPE_URL = process.env.NETNUTRITION_URL || 'https://netnutrition.bsu.edu/NetNutrition/1';
 
-// Utility function to parse NetNutrition table rows
-async function parseNetNutrition(url) {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+app.use(express.json({ limit: '1mb' }));
 
-  const page = await browser.newPage();
+let cache = {
+  data: null,
+  updatedAt: null,
+};
 
-  try {
-    await page.goto(url, { waitUntil: 'networkidle' });
+async function refreshCache() {
+  const startedAt = Date.now();
+  const data = await scrapeNetNutrition({ url: SCRAPE_URL, logger: console });
 
-    // Wait for table to load
-    await page.waitForSelector('table#foodItems', { timeout: 10000 });
+  cache = {
+    data,
+    updatedAt: new Date().toISOString(),
+  };
 
-    // Extract table data
-    const data = await page.$$eval('table#foodItems tbody tr', rows =>
-      rows.map(row => {
-        const cells = Array.from(row.querySelectorAll('td'));
-        return {
-          name: cells[0]?.innerText.trim() || null,
-          calories: cells[1]?.innerText.trim() || null,
-          protein: cells[2]?.innerText.trim() || null,
-          carbs: cells[3]?.innerText.trim() || null,
-          fat: cells[4]?.innerText.trim() || null,
-        };
-      })
-    );
+  const elapsedMs = Date.now() - startedAt;
+  console.info(`[api] Cache refreshed in ${elapsedMs}ms`);
 
-    await browser.close();
-    return data;
-  } catch (err) {
-    await browser.close();
-    console.error('Error parsing NetNutrition:', err);
-    throw err;
-  }
+  return {
+    status: 'ok',
+    fromCache: false,
+    updatedAt: cache.updatedAt,
+    elapsedMs,
+    ...data,
+  };
 }
 
-// Endpoint for Supabase to call
-app.get('/netnutrition', async (req, res) => {
-  try {
-    const url = 'http://netnutrition.bsu.edu/NetNutrition/1';
-    const items = await parseNetNutrition(url);
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, service: 'nutritrack-render-scraper', updatedAt: cache.updatedAt });
+});
 
-    res.json({
-      status: 'ok',
-      count: items.length,
-      data: items,
-    });
-  } catch (err) {
-    res.status(500).json({
-      error: 'Scraper failed',
-      details: err.message,
+app.get(BASE_PATH, async (_req, res) => {
+  try {
+    if (cache.data) {
+      return res.json({
+        status: 'ok',
+        fromCache: true,
+        updatedAt: cache.updatedAt,
+        ...cache.data,
+      });
+    }
+
+    const fresh = await refreshCache();
+    return res.json(fresh);
+  } catch (error) {
+    console.error('[api] GET /netnutrition failed:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Unable to return NetNutrition data',
+      details: error?.message || String(error),
     });
   }
 });
 
+async function handleScrape(_req, res) {
+  try {
+    const fresh = await refreshCache();
+    return res.json(fresh);
+  } catch (error) {
+    console.error('[api] POST scrape failed:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Scrape failed',
+      details: error?.message || String(error),
+      cachedAvailable: Boolean(cache.data),
+      cachedUpdatedAt: cache.updatedAt,
+    });
+  }
+}
+
+app.post('/scrape', handleScrape);
+app.post(`${BASE_PATH}/scrape`, handleScrape);
+
 app.listen(PORT, () => {
-  console.log(`NetNutrition scraper running on port ${PORT}`);
+  console.info(`[api] NetNutrition scraper listening on port ${PORT}`);
 });
