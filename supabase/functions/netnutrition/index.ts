@@ -21,13 +21,11 @@ Deno.serve(async (req) => {
 
   try {
     const incomingUrl = new URL(req.url);
-    const sourceUrl =
-      req.method === 'POST'
-        ? ((await req.json().catch(() => ({}))) as { url?: string })?.url?.trim() || null
-        : incomingUrl.searchParams.get('url');
+    const body = req.method === 'POST' ? ((await req.json().catch(() => ({}))) as { url?: string }) : null;
+    const sourceUrl = body?.url?.trim() || incomingUrl.searchParams.get('url');
 
     const renderUrl = new URL(RENDER_URL);
-    if (sourceUrl?.length) renderUrl.searchParams.set('url', sourceUrl);
+    if (sourceUrl) renderUrl.searchParams.set('url', sourceUrl);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -41,49 +39,21 @@ Deno.serve(async (req) => {
       });
     } catch (fetchError) {
       const details = fetchError instanceof Error ? fetchError.message : String(fetchError);
-      return json(
-        {
-          error: 'Failed to reach Render scraper service.',
-          details,
-          endpoint: RENDER_URL,
-        },
-        502,
-      );
+      return json({ error: 'Failed to reach Render scraper service.', details, endpoint: RENDER_URL }, 502);
     } finally {
       clearTimeout(timeout);
     }
 
     const rawText = await upstreamResponse.text();
-
-    let parsedJson: unknown;
-    try {
-      parsedJson = rawText ? JSON.parse(rawText) : {};
-    } catch (_parseError) {
-      return json(
-        {
-          error: 'Render scraper returned invalid JSON.',
-          endpoint: RENDER_URL,
-          status: upstreamResponse.status,
-        },
-        502,
-      );
-    }
+    const parsedJson = rawText ? JSON.parse(rawText) : {};
 
     if (!upstreamResponse.ok) {
-      const details =
-        typeof parsedJson === 'object' &&
-        parsedJson !== null &&
-        'error' in parsedJson &&
-        typeof (parsedJson as { error?: unknown }).error === 'string'
-          ? (parsedJson as { error: string }).error
-          : `Render scraper returned HTTP ${upstreamResponse.status}`;
-
       return json(
         {
           error: 'Render scraper request failed.',
-          details,
           endpoint: RENDER_URL,
           status: upstreamResponse.status,
+          details: parsedJson,
         },
         502,
       );
@@ -93,13 +63,6 @@ Deno.serve(async (req) => {
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     console.error('[netnutrition] unexpected proxy error', { details });
-
-    return json(
-      {
-        error: 'Unexpected error while requesting Render scraper.',
-        details,
-      },
-      500,
-    );
+    return json({ error: 'Unexpected error while requesting Render scraper.', details }, 500);
   }
 });

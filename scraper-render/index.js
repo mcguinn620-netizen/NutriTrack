@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const DEFAULT_NETNUTRITION_URL = process.env.NETNUTRITION_URL || 'https://netnutrition.bsu.edu/NetNutrition/1';
+const DEFAULT_NETNUTRITION_URL = process.env.NETNUTRITION_URL || 'http://netnutrition.bsu.edu/NetNutrition/1';
 
 const USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
