@@ -1,5 +1,5 @@
 {
-  "name": "netnutrition-scraper",
+  "name": "nutritrack-render-scraper",
   "version": "1.0.0",
   "description": "Render-hosted Playwright scraper service for NetNutrition",
   "type": "module",
@@ -8,7 +8,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "postinstall": "playwright install chromium"
   },
   "dependencies": {
     "express": "^4.21.2",
