@@ -1,7 +1,7 @@
 /**
  * netNutritionService.ts
  *
- * Client-side service calling the OnSpace Cloud Edge Function
+ * Client-side service calling the Supabase Edge Function
  * which proxies BSU NetNutrition (CBORD) live data.
  *
  * API flow (from CBORD_NN_UI.js):
@@ -11,14 +11,11 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getSupabaseClient } from '@/template';
-import { FunctionsHttpError } from '@supabase/supabase-js';
 
 const CACHE_PREFIX = '@nn_v3_';
 const TTL_MENU = 30 * 60 * 1000;           // 30 min — locations, menus, courses, items
 const TTL_NUTRITION = 24 * 60 * 60 * 1000; // 24 h  — nutrition facts
 const SCRAPE_CACHE_KEY = 'scrape_payload';
-const NETNUTRITION_SOURCE_URL = 'http://netnutrition.bsu.edu/NetNutrition/1#';
 const NETNUTRITION_FUNCTION_URL = 'https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -61,15 +58,10 @@ export interface NNNutrition {
   sugar: number;
 }
 
-interface NNTrait {
-  oid: number;
-  name: string;
-}
-
 interface NNScrapedItem {
   oid: number;
   name: string;
-  traits?: NNTrait[];
+  traits?: string[];
   nutrition?: Record<string, string>;
   nutritionLabel?: Record<string, string>;
   nutritionGrid?: Record<string, string>;
@@ -122,53 +114,21 @@ async function setCached<T>(key: string, data: T): Promise<void> {
 
 // ── Edge Function invocation ──────────────────────────────────────────────────
 
-async function invoke<T>(body: Record<string, unknown>): Promise<T> {
-  const supabase = getSupabaseClient();
-  console.log('[netNutritionService.invoke] request', body);
-  const { data, error } = await supabase.functions.invoke('netnutrition', { body });
-
-  if (error) {
-    let msg = error.message;
-    if (error instanceof FunctionsHttpError) {
-      try {
-        const statusCode = error.context?.status ?? 500;
-        const text = await error.context?.text();
-        msg = `[${statusCode}] ${text || msg}`;
-      } catch { /* ignore */ }
-    }
-    console.error('[netNutritionService.invoke] error', { body, message: msg });
-    throw new Error(msg);
-  }
-
-  if (data?.error) throw new Error(data.error);
-  console.log('[netNutritionService.invoke] response ok', {
-    action: body.action,
-    keys: data ? Object.keys(data) : [],
-  });
-  return data as T;
-}
-
-async function invokeDirectFetch<T>(body: Record<string, unknown>): Promise<T> {
-  const requestUrl = new URL(NETNUTRITION_FUNCTION_URL);
-  if (typeof body.url === 'string' && body.url.trim().length) {
-    requestUrl.searchParams.set('url', body.url);
-  }
+async function invokeDirectFetch<T>(): Promise<T> {
   console.log('[netNutritionService.invokeDirectFetch] request', {
-    url: requestUrl.toString(),
+    url: NETNUTRITION_FUNCTION_URL,
   });
-  const response = await fetch(requestUrl.toString());
-
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : {};
+  const res = await fetch(NETNUTRITION_FUNCTION_URL);
+  const data = await res.json();
   console.log('[netNutritionService.invokeDirectFetch] response', {
-    status: response.status,
-    ok: response.ok,
-    keys: json && typeof json === 'object' ? Object.keys(json as Record<string, unknown>) : [],
+    status: res.status,
+    ok: res.ok,
+    keys: data && typeof data === 'object' ? Object.keys(data as Record<string, unknown>) : [],
   });
-  if (!response.ok || json?.error) {
-    throw new Error(json?.error || `[${response.status}] ${text}`);
+  if (!res.ok || data?.error) {
+    throw new Error(data?.error || `[${res.status}] netnutrition fetch failed`);
   }
-  return json as T;
+  return data as T;
 }
 
 function normalizeScrapePayload(payload: unknown): NNScrapePayload {
@@ -185,21 +145,9 @@ async function loadScrapedPayload(): Promise<NNScrapePayload> {
   const cached = await getCached<NNScrapePayload>(SCRAPE_CACHE_KEY, TTL_MENU);
   if (cached?.units?.length) return cached;
 
-  const requestBody = { url: NETNUTRITION_SOURCE_URL };
-
   let payload = normalizeScrapePayload(
-    await invokeDirectFetch<NNScrapePayload>(requestBody),
+    await invokeDirectFetch<NNScrapePayload>(),
   );
-
-  if (!payload?.units?.length) {
-    try {
-      payload = normalizeScrapePayload(
-        await invoke<NNScrapePayload>(requestBody),
-      );
-    } catch (err) {
-      console.warn('[netNutritionService] fallback invoke failed', err);
-    }
-  }
 
   if (!payload?.units) payload = { units: [] };
   console.log('[netNutritionService.loadScrapedPayload] payload ready', {
@@ -261,11 +209,14 @@ export const netNutritionService = {
     const result = await loadScrapedPayload();
     const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
     const menu = (unit?.menus ?? []).find((entry) => entry.oid === menuOid);
-    const traits = new Map<number, string>();
+    const traits = new Map<string, string>();
     for (const item of menu?.items ?? []) {
-      for (const trait of item.traits ?? []) traits.set(trait.oid, trait.name);
+      for (const trait of item.traits ?? []) traits.set(trait, trait);
     }
-    const courses = Array.from(traits.entries()).map(([oid, name]) => ({ oid, name }));
+    const courses = Array.from(traits.entries()).map(([name], index) => ({
+      oid: index + 1,
+      name,
+    }));
     console.log('[netNutritionService.getCourses] fetched', { unitOid, menuOid, count: courses.length });
     if (courses.length) await setCached(key, courses);
     return courses;
@@ -295,7 +246,8 @@ export const netNutritionService = {
     const items = (menu?.items ?? [])
       .filter((item) => {
         if (!courseOid) return true;
-        return (item.traits ?? []).some((trait) => trait.oid === courseOid);
+        const traits = item.traits ?? [];
+        return traits.some((trait, traitIndex) => traitIndex + 1 === courseOid);
       })
       .map((item) => ({
         oid: item.oid,
