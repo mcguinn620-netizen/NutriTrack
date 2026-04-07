@@ -3,30 +3,39 @@ import { chromium } from 'playwright';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const DEFAULT_NETNUTRITION_URL = process.env.NETNUTRITION_URL || 'http://netnutrition.bsu.edu/NetNutrition/1';
+const DEFAULT_SOURCE_URL = process.env.NETNUTRITION_URL || 'http://netnutrition.bsu.edu/NetNutrition/1';
 
 const USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-function cleanText(value) {
-  return String(value || '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function parseNumericId(value, fallback) {
+const cleanText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+const parseNumericId = (value, fallback = 0) => {
   const match = String(value || '').match(/(\d{1,12})/);
   return match ? Number(match[1]) : fallback;
+};
+
+function withCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
 }
 
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'netnutrition-render-scraper' });
+app.options('/netnutrition', (_req, res) => {
+  withCors(res);
+  res.status(204).send('');
 });
 
-app.get('/scrape', async (req, res) => {
-  const sourceUrl = String(req.query.url || DEFAULT_NETNUTRITION_URL).replace(/#$/, '');
+app.get('/health', (_req, res) => {
+  withCors(res);
+  res.json({ ok: true, service: 'nutritrack-render-scraper' });
+});
+
+app.get('/netnutrition', async (req, res) => {
+  withCors(res);
+  const sourceUrl = cleanText(String(req.query.url || DEFAULT_SOURCE_URL)).replace(/#$/, '');
 
   let browser;
+
   try {
     browser = await chromium.launch({
       headless: true,
@@ -40,17 +49,12 @@ app.get('/scrape', async (req, res) => {
     await page.goto(sourceUrl, { waitUntil: 'networkidle' });
 
     const payload = await page.evaluate(async () => {
-      const clean = (value) =>
-        String(value || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-
-      const wait = (ms = 300) => new Promise((resolve) => setTimeout(resolve, ms));
-
+      const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
       const parseId = (value, fallback = 0) => {
         const match = String(value || '').match(/(\d{1,12})/);
         return match ? Number(match[1]) : fallback;
       };
+      const sleep = (ms = 350) => new Promise((resolve) => setTimeout(resolve, ms));
 
       const dedupe = (rows, keyFn) => {
         const seen = new Set();
@@ -62,16 +66,15 @@ app.get('/scrape', async (req, res) => {
         });
       };
 
-      const clickableNodes = () => Array.from(document.querySelectorAll('a,button,[onclick]'));
-
+      const clickable = () => Array.from(document.querySelectorAll('a,button,[onclick]'));
       const clickNode = async (node) => {
         node.scrollIntoView({ block: 'center' });
         node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        await wait(400);
+        await sleep(450);
       };
 
       const collectBySignals = (signals) => {
-        const rows = clickableNodes()
+        const rows = clickable()
           .map((node, index) => {
             const signature = [
               node.getAttribute('onclick') || '',
@@ -88,57 +91,40 @@ app.get('/scrape', async (req, res) => {
             if (!name) return null;
 
             return {
-              id: parseId(signature, index + 1),
+              oid: parseId(signature, index + 1),
               name,
               click: () => clickNode(node),
             };
           })
           .filter(Boolean);
 
-        return dedupe(rows, (row) => `${row.id}:${row.name}`);
+        return dedupe(rows, (row) => `${row.oid}:${row.name}`);
       };
 
-      const collectTraits = () =>
-        collectBySignals(['selecttrait', 'trait'])
-          .map((trait) => ({ id: trait.id, name: trait.name }))
-          .filter((trait) => !/^trait$/i.test(trait.name));
+      const parseNutrition = () => {
+        const out = {};
+        const rows = Array.from(document.querySelectorAll('tr,.cbo_nn_LabelRow,.nutrition-row,.nf-line'));
 
-      const parseNutritionLabels = () => {
-        const labels = {};
+        for (const row of rows) {
+          const values = Array.from(row.querySelectorAll('th,td,span,div'))
+            .map((node) => clean(node.textContent))
+            .filter(Boolean);
 
-        const rowLikeSelectors = ['tr', '.cbo_nn_LabelRow', '.nutrition-row', '.nf-line'];
-        const rows = rowLikeSelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
-
-        rows.forEach((row) => {
-          const cells = Array.from(row.querySelectorAll('th,td,span,div')).map((cell) => clean(cell.textContent));
-          const nonEmpty = cells.filter(Boolean);
-          if (nonEmpty.length >= 2) {
-            const key = nonEmpty[0].replace(/:$/, '');
-            const value = nonEmpty[nonEmpty.length - 1];
+          if (values.length >= 2) {
+            const key = values[0].replace(/:$/, '');
+            const value = values[values.length - 1];
             if (key && value && key.length < 80 && value.length < 80) {
-              labels[key] = value;
+              out[key] = value;
             }
           }
-        });
-
-        if (Object.keys(labels).length === 0) {
-          const text = clean(document.body?.innerText || '');
-          text.split(/\n+/).forEach((line) => {
-            const [rawKey, ...rest] = line.split(':');
-            const key = clean(rawKey);
-            const value = clean(rest.join(':'));
-            if (key && value && key.length < 80 && value.length < 80) {
-              labels[key] = value;
-            }
-          });
         }
 
-        return labels;
+        return out;
       };
 
       const collectItems = () => {
         const nodes = Array.from(document.querySelectorAll('tr,li,div,a'));
-        const results = nodes
+        const rows = nodes
           .map((node, index) => {
             const signature = [
               node.getAttribute('onclick') || '',
@@ -158,12 +144,16 @@ app.get('/scrape', async (req, res) => {
             const name = clean(nameNode.textContent);
             if (!name || /^\d+$/.test(name)) return null;
 
-            const id = parseId(signature, index + 1);
-            return { id, name };
+            const oid = parseId(signature, index + 1);
+            return {
+              oid,
+              name,
+              nutrition: parseNutrition(),
+            };
           })
           .filter(Boolean);
 
-        return dedupe(results, (row) => `${row.id}:${row.name}`);
+        return dedupe(rows, (row) => `${row.oid}:${row.name}`);
       };
 
       const topUnits = collectBySignals(['selectunitfromunitslist']);
@@ -173,76 +163,47 @@ app.get('/scrape', async (req, res) => {
         await topUnit.click();
 
         let childUnits = collectBySignals(['selectunitfromchildunitslist']);
-        if (childUnits.length === 0) {
-          childUnits = [{ id: topUnit.id, name: topUnit.name, click: async () => {} }];
-        }
-
-        const childUnitPayloads = [];
+        if (childUnits.length === 0) childUnits = [{ ...topUnit, click: async () => {} }];
 
         for (const childUnit of childUnits) {
           await childUnit.click();
 
           const menus = collectBySignals(['selectmenu']);
           const menuPayloads = [];
+          const flattenedItems = [];
 
           for (const menu of menus) {
             await menu.click();
-
-            const traits = collectTraits();
             const items = collectItems();
-
-            const itemPayloads = items.map((item) => ({
-              id: item.id,
-              name: item.name,
-              traits,
-              nutritionLabels: parseNutritionLabels(),
-            }));
-
-            menuPayloads.push({
-              id: menu.id,
-              name: menu.name,
-              items: itemPayloads,
-            });
+            menuPayloads.push({ oid: menu.oid, name: menu.name, items });
+            flattenedItems.push(...items);
           }
 
-          childUnitPayloads.push({
-            id: childUnit.id,
+          units.push({
+            oid: childUnit.oid,
             name: childUnit.name,
+            source: childUnit.oid === topUnit.oid ? 'unit' : 'child-unit',
             menus: menuPayloads,
+            items: dedupe(flattenedItems, (row) => `${row.oid}:${row.name}`),
           });
         }
-
-        units.push({
-          id: topUnit.id,
-          name: topUnit.name,
-          childUnits: childUnitPayloads,
-        });
       }
 
-      return {
-        units,
-        generatedAt: new Date().toISOString(),
-      };
+      return { units, generatedAt: new Date().toISOString() };
     });
 
-    res.json({
-      sourceUrl,
-      ...payload,
-    });
+    res.status(200).json({ sourceUrl, ...payload });
   } catch (error) {
     res.status(500).json({
       error: 'Render scraper failed',
-      details: cleanText(error instanceof Error ? error.message : String(error)),
       sourceUrl,
+      details: cleanText(error instanceof Error ? error.message : String(error)),
     });
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    if (browser) await browser.close();
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`NetNutrition Render scraper listening on ${PORT}`);
-  console.log(`Default source: ${DEFAULT_NETNUTRITION_URL}`);
+  console.log(`NetNutrition scraper running on port ${PORT}`);
 });
