@@ -1,68 +1,57 @@
-import { corsHeaders } from '../_shared/cors.ts';
+// index.ts
+import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
+import { DOMParser } from "https://deno.land/x/deno_dom/deno-dom-wasm.ts";
 
-const RENDER_URL = 'https://nutritrack-2jj9.onrender.com/scrape';
-const REQUEST_TIMEOUT_MS = 60_000;
+const NETNUTRITION_URL = "http://netnutrition.bsu.edu/NetNutrition/1";
 
-function json(payload: unknown, status = 200): Response {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: {
-      ...corsHeaders,
-      'content-type': 'application/json; charset=utf-8',
-    },
-  });
-}
-
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  if (!['GET', 'POST'].includes(req.method)) {
-    return json({ error: 'Method not allowed. Use GET or POST.' }, 405);
-  }
-
+serve(async (req) => {
   try {
-    const incomingUrl = new URL(req.url);
-    const body = req.method === 'POST' ? ((await req.json().catch(() => ({}))) as { url?: string }) : null;
-    const sourceUrl = body?.url?.trim() || incomingUrl.searchParams.get('url');
+    // Fetch the page HTML
+    const res = await fetch(NETNUTRITION_URL, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html",
+      },
+    });
 
-    const renderUrl = new URL(RENDER_URL);
-    if (sourceUrl) renderUrl.searchParams.set('url', sourceUrl);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-    let upstreamResponse: Response;
-    try {
-      upstreamResponse = await fetch(renderUrl.toString(), {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        signal: controller.signal,
-      });
-    } catch (fetchError) {
-      const details = fetchError instanceof Error ? fetchError.message : String(fetchError);
-      return json({ error: 'Failed to reach Render scraper service.', details, endpoint: RENDER_URL }, 502);
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    const rawText = await upstreamResponse.text();
-    const parsedJson = rawText ? JSON.parse(rawText) : {};
-
-    if (!upstreamResponse.ok) {
-      return json(
-        {
-          error: 'Render scraper request failed.',
-          endpoint: RENDER_URL,
-          status: upstreamResponse.status,
-          details: parsedJson,
-        },
-        502,
+    if (!res.ok) {
+      return new Response(
+        JSON.stringify({ error: "Failed to fetch NetNutrition page", status: res.status }),
+        { status: 502, headers: { "Content-Type": "application/json" } }
       );
     }
 
-    return json(parsedJson, 200);
-  } catch (error) {
-    const details = error instanceof Error ? error.message : String(error);
-    console.error('[netnutrition] unexpected proxy error', { details });
-    return json({ error: 'Unexpected error while requesting Render scraper.', details }, 500);
+    const html = await res.text();
+
+    // Parse HTML using deno_dom
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    if (!doc) {
+      return new Response(
+        JSON.stringify({ error: "Failed to parse HTML" }),
+        { status: 500, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Example: extract all "units" from table rows
+    const units: { name: string; link?: string }[] = [];
+    const tableRows = doc.querySelectorAll("table tr");
+    tableRows.forEach((row) => {
+      const cell = row.querySelector("td a");
+      if (cell) {
+        units.push({ name: cell.textContent.trim(), link: cell.getAttribute("href") || undefined });
+      }
+    });
+
+    // Return JSON
+    return new Response(JSON.stringify({ units }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: "Scraper failed", message: err.message }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
 });
