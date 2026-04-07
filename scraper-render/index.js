@@ -1,5 +1,13 @@
 import express from "express";
 import { chromium } from "playwright";
+import { execSync } from "child_process";
+
+// 🔥 FORCE INSTALL (fixes Render issue)
+try {
+  execSync("npx playwright install chromium", { stdio: "inherit" });
+} catch (e) {
+  console.log("Playwright install check:", e.message);
+}
 
 const app = express();
 const PORT = process.env.PORT || 10000;
