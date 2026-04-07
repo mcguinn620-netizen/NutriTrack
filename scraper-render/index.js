@@ -1,5 +1,5 @@
-const express = require('express');
-const { chromium } = require('playwright');
+import express from 'express';
+import { chromium } from 'playwright';
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
