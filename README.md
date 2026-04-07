@@ -113,3 +113,67 @@ This project is private ("private": true). For collaboration inquiries, please c
 ---
 
 Feel free to add project screenshots, API documentation, feature descriptions, or any other information as needed.
+
+## Backend API (Render + React Native)
+
+A production-ready backend is available in [`backend/`](./backend) with Express, Playwright scraping, and Supabase-backed caching.
+
+### Backend setup
+
+```bash
+cd backend
+npm install
+npm run build
+npm start
+```
+
+### Environment variables
+
+Set these in Render (or local `.env` inside `backend/`):
+
+- `PORT` (Render provides this automatically)
+- `NETNUTRITION_URL` (example: `http://netnutrition.bsu.edu/NetNutrition/1`)
+- `NETNUTRITION_HALL_PARAM` (optional, defaults to `cboUnit`)
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `OPENAI_API_KEY` (optional, only if future AI post-processing is added)
+
+### API endpoints
+
+- `GET /health` → `{ "status": "OK" }`
+- `GET /halls` → list available dining halls (cached when available)
+- `GET /menu?hall=<hall-name-or-id>` → hall menu (cached for 7 days, auto refresh if stale)
+- `POST /scrape` → force fresh scrape for all halls, update cache, and return fresh results
+
+### React Native integration
+
+Use your Render URL as API base, then call:
+
+- `GET /halls` to populate hall picker
+- `GET /menu?hall=...` to fetch menu data for a selected hall
+- `POST /scrape` to allow manual refresh
+
+### Supabase table for weekly cache
+
+Run in Supabase SQL editor if the table does not already exist:
+
+```sql
+create table if not exists public.menus (
+  hall text primary key,
+  payload jsonb not null,
+  updated_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+```
+
+### Render deployment
+
+A `render.yaml` is included. Equivalent manual setup for a Render Web Service:
+
+- Root Directory: `backend`
+- Build Command: `npm install`
+- Start Command: `npm start`
+- Environment: `Node`
+- Required env vars: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `NETNUTRITION_URL`
+
+The backend binds to `0.0.0.0` and `process.env.PORT`, which is required by Render Web Services.

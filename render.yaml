@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: nutritrack-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: NETNUTRITION_URL
+        sync: false
+      - key: NETNUTRITION_HALL_PARAM
+        value: cboUnit
+      - key: OPENAI_API_KEY
+        sync: false
