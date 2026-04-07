@@ -1,6 +1,6 @@
 import { corsHeaders } from '../_shared/cors.ts';
 
-const DEFAULT_RENDER_ENDPOINT = 'https://<your-render-service>.onrender.com/scrape';
+const RENDER_URL = 'https://nutritrack-2jj9.onrender.com/scrape';
 const REQUEST_TIMEOUT_MS = 60_000;
 
 function json(payload: unknown, status = 200): Response {
@@ -13,12 +13,6 @@ function json(payload: unknown, status = 200): Response {
   });
 }
 
-function resolveRenderEndpoint(): string {
-  const configured = Deno.env.get('RENDER_SCRAPER_URL')?.trim();
-  const endpoint = configured && configured.length > 0 ? configured : DEFAULT_RENDER_ENDPOINT;
-  return endpoint.replace(/\/$/, '');
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (!['GET', 'POST'].includes(req.method)) {
@@ -26,23 +20,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    let sourceUrl: string | null = null;
+    const incomingUrl = new URL(req.url);
+    const sourceUrl =
+      req.method === 'POST'
+        ? ((await req.json().catch(() => ({}))) as { url?: string })?.url?.trim() || null
+        : incomingUrl.searchParams.get('url');
 
-    if (req.method === 'POST') {
-      const body = await req.json().catch(() => ({}));
-      if (typeof body?.url === 'string' && body.url.trim()) {
-        sourceUrl = body.url.trim();
-      }
-    } else {
-      const incomingUrl = new URL(req.url);
-      sourceUrl = incomingUrl.searchParams.get('url');
-    }
-
-    const renderEndpoint = resolveRenderEndpoint();
-    const renderUrl = new URL(renderEndpoint);
-    if (sourceUrl) {
-      renderUrl.searchParams.set('url', sourceUrl);
-    }
+    const renderUrl = new URL(RENDER_URL);
+    if (sourceUrl?.length) renderUrl.searchParams.set('url', sourceUrl);
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -60,7 +45,7 @@ Deno.serve(async (req) => {
         {
           error: 'Failed to reach Render scraper service.',
           details,
-          endpoint: renderUrl.toString(),
+          endpoint: RENDER_URL,
         },
         502,
       );
@@ -77,7 +62,7 @@ Deno.serve(async (req) => {
       return json(
         {
           error: 'Render scraper returned invalid JSON.',
-          endpoint: renderUrl.toString(),
+          endpoint: RENDER_URL,
           status: upstreamResponse.status,
         },
         502,
@@ -97,7 +82,7 @@ Deno.serve(async (req) => {
         {
           error: 'Render scraper request failed.',
           details,
-          endpoint: renderUrl.toString(),
+          endpoint: RENDER_URL,
           status: upstreamResponse.status,
         },
         502,
