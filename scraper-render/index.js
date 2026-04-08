@@ -1,67 +1,86 @@
-// scraper-render/index.js
 import express from 'express';
-import { chromium } from 'playwright';
+import { scrapeNetNutrition } from './utils/parser.js';
 
 const app = express();
-const PORT = process.env.PORT || 9999;
+app.use(express.json({ limit: '2mb' }));
 
-// Utility function to parse NetNutrition table rows
-async function parseNetNutrition(url) {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+const PORT = Number(process.env.PORT || 3000);
+let cachedPayload = null;
+let lastError = null;
+let inflightScrape = null;
 
-  const page = await browser.newPage();
+async function runScrape() {
+  if (inflightScrape) return inflightScrape;
 
-  try {
-    await page.goto(url, { waitUntil: 'networkidle' });
+  inflightScrape = (async () => {
+    const started = Date.now();
+    try {
+      const payload = await scrapeNetNutrition();
+      cachedPayload = payload;
+      lastError = null;
+      const ms = Date.now() - started;
+      console.log(
+        `[scrape] success halls=${payload.counts.dining_halls} menus=${payload.counts.menus} items=${payload.counts.items} durationMs=${ms}`,
+      );
+      return payload;
+    } catch (error) {
+      lastError = {
+        message: error instanceof Error ? error.message : String(error),
+        at: new Date().toISOString(),
+      };
+      console.error('[scrape] failed', error);
+      throw error;
+    } finally {
+      inflightScrape = null;
+    }
+  })();
 
-    // Wait for table to load
-    await page.waitForSelector('table#foodItems', { timeout: 10000 });
-
-    // Extract table data
-    const data = await page.$$eval('table#foodItems tbody tr', rows =>
-      rows.map(row => {
-        const cells = Array.from(row.querySelectorAll('td'));
-        return {
-          name: cells[0]?.innerText.trim() || null,
-          calories: cells[1]?.innerText.trim() || null,
-          protein: cells[2]?.innerText.trim() || null,
-          carbs: cells[3]?.innerText.trim() || null,
-          fat: cells[4]?.innerText.trim() || null,
-        };
-      })
-    );
-
-    await browser.close();
-    return data;
-  } catch (err) {
-    await browser.close();
-    console.error('Error parsing NetNutrition:', err);
-    throw err;
-  }
+  return inflightScrape;
 }
 
-// Endpoint for Supabase to call
-app.get('/netnutrition', async (req, res) => {
-  try {
-    const url = 'http://netnutrition.bsu.edu/NetNutrition/1';
-    const items = await parseNetNutrition(url);
+app.get('/health', (_req, res) => {
+  res.json({ ok: true, cached: Boolean(cachedPayload), lastError });
+});
 
-    res.json({
-      status: 'ok',
-      count: items.length,
-      data: items,
+app.get('/netnutrition', async (_req, res) => {
+  try {
+    if (!cachedPayload) {
+      const fresh = await runScrape();
+      return res.status(200).json({
+        status: 'fresh',
+        ...fresh,
+      });
+    }
+
+    return res.status(200).json({
+      status: 'cached',
+      ...cachedPayload,
     });
-  } catch (err) {
-    res.status(500).json({
-      error: 'Scraper failed',
-      details: err.message,
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Failed to load NetNutrition data',
+      details: error instanceof Error ? error.message : String(error),
+      lastError,
+    });
+  }
+});
+
+app.post(['/scrape', '/netnutrition/scrape'], async (_req, res) => {
+  try {
+    const fresh = await runScrape();
+    return res.status(200).json({
+      status: 'fresh',
+      ...fresh,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: 'Scrape failed',
+      details: error instanceof Error ? error.message : String(error),
+      lastError,
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`NetNutrition scraper running on port ${PORT}`);
+  console.log(`NutriTrack Render scraper listening on :${PORT}`);
 });
