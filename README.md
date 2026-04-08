@@ -53,7 +53,7 @@ cp .env.example .env
 
 ```bash
 supabase login
-supabase link --project-ref <your-project-ref>
+supabase link --project-ref upjotaeatvessmbrorgx
 supabase functions deploy netnutrition --no-verify-jwt
 ```
 
@@ -64,15 +64,13 @@ supabase functions deploy netnutrition --no-verify-jwt
 ```bash
 curl -sS -D /tmp/nn_headers.txt \
   -o /tmp/nn_body.json \
-  -X POST \
   "https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition" \
   -H "Content-Type: application/json" \
-  -H "apikey: $EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
-  -H "Authorization: Bearer $EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY" \
-  --data '{"url":"http://netnutrition.bsu.edu/NetNutrition/1#"}'
+  -H "apikey: sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di" \
+  -H "Authorization: Bearer sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di"
 
-# Parse result shape (units -> menus -> items -> traits -> nutrition)
-jq '.units[0].menus[0].items[0]' /tmp/nn_body.json
+# Parse result shape (halls -> menus -> items)
+jq '.halls[0].menus[0].items[0]' /tmp/nn_body.json
 ```
 
 ## Main Dependencies
