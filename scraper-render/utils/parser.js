@@ -1,78 +1,137 @@
-import { chromium } from "playwright";
+import fetch from "node-fetch";
 
-export async function scrapeNetNutrition() {
-  let browser;
+const BASE = "https://netnutrition.bsu.edu/NetNutrition";
+
+// --- SESSION HANDLER ---
+class Session {
+  constructor() {
+    this.cookie = "";
+  }
+
+  update(res) {
+    const setCookie = res.headers.raw()["set-cookie"];
+    if (setCookie) {
+      this.cookie = setCookie.map(c => c.split(";")[0]).join("; ");
+    }
+  }
+
+  headers(extra = {}) {
+    return {
+      "User-Agent": "Mozilla/5.0",
+      "Accept": "application/json, text/plain, */*",
+      "Content-Type": "application/json",
+      "Cookie": this.cookie,
+      ...extra
+    };
+  }
+}
+
+// --- SAFE FETCH ---
+async function safeFetch(url, options = {}, session) {
+  const res = await fetch(url, {
+    ...options,
+    timeout: 20000
+  });
+
+  if (session) session.update(res);
+
+  const text = await res.text();
 
   try {
-    browser = await chromium.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
-    });
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
 
-    const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    });
+// --- MAIN SCRAPER ---
+export async function scrapeNetNutrition() {
+  const session = new Session();
 
-    const page = await context.newPage();
+  try {
+    // STEP 1: INIT SESSION
+    await fetch(`${BASE}/1`, {
+      headers: session.headers({ Accept: "text/html" })
+    }).then(res => session.update(res));
 
-    // Block heavy resources (faster + prevents timeout)
-    await page.route("**/*", (route) => {
-      const type = route.request().resourceType();
-      if (["image", "font", "stylesheet"].includes(type)) {
-        route.abort();
-      } else {
-        route.continue();
-      }
-    });
+    // STEP 2: LOAD ROOT → GET DINING HALLS
+    const root = await safeFetch(
+      `${BASE}/Unit/SelectUnitFromSideBar`,
+      {
+        method: "POST",
+        body: JSON.stringify({ unitOid: 1 })
+      },
+      session
+    );
 
-    const url = "https://netnutrition.bsu.edu/NetNutrition/1#";
-
-    // 🔥 CRITICAL FIX: robust navigation
-    try {
-      await page.goto(url, {
-        waitUntil: "networkidle",
-        timeout: 90000
-      });
-    } catch (err) {
-      console.log("[goto retry] first attempt failed:", err.message);
-
-      await page.waitForTimeout(5000);
-
-      await page.goto(url, {
-        waitUntil: "load",
-        timeout: 90000
-      });
+    if (!root?.childUnitsPanel?.units) {
+      throw new Error("No dining halls returned");
     }
 
-    // Ensure page actually loaded something
-    await page.waitForTimeout(3000);
+    const results = [];
 
-    const html = await page.content();
+    // STEP 3: LOOP DINING HALLS
+    for (const hall of root.childUnitsPanel.units) {
+      const hallId = hall.unitOid;
+
+      const hallRes = await safeFetch(
+        `${BASE}/Unit/SelectUnitFromSideBar`,
+        {
+          method: "POST",
+          body: JSON.stringify({ unitOid: hallId })
+        },
+        session
+      );
+
+      const menus = hallRes?.menuPanel?.menus || [];
+
+      const hallObj = {
+        id: hallId,
+        name: hall.name,
+        menus: []
+      };
+
+      // STEP 4: LOOP MENUS
+      for (const menu of menus) {
+        const menuId = menu.menuOid;
+
+        const menuRes = await safeFetch(
+          `${BASE}/Menu/SelectMenu`,
+          {
+            method: "POST",
+            body: JSON.stringify({ menuOid: menuId })
+          },
+          session
+        );
+
+        const items = menuRes?.itemPanel?.items || [];
+
+        hallObj.menus.push({
+          id: menuId,
+          name: menu.name,
+          items: items.map(i => ({
+            id: i.recipeOid,
+            name: i.name
+          }))
+        });
+      }
+
+      results.push(hallObj);
+    }
 
     return {
       success: true,
-      length: html.length,
-      message: "Page loaded successfully"
+      halls: results,
+      totalHalls: results.length,
+      timestamp: new Date().toISOString()
     };
 
-  } catch (error) {
-    console.error("[scrape error]", error);
+  } catch (err) {
+    console.error("[SCRAPER ERROR]", err);
 
     return {
       success: false,
-      error: "Failed to load NetNutrition data",
-      details: error.message,
-      at: new Date().toISOString()
+      error: err.message
     };
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
   }
 }
