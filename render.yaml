@@ -1,21 +1,15 @@
-services:
-  - type: web
-    name: nutritrack-backend
-    env: node
-    rootDir: backend
-    buildCommand: npm install && npm run build
-    startCommand: npm start
-    autoDeploy: true
-    envVars:
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: "0"
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: NETNUTRITION_URL
-        sync: false
-      - key: NETNUTRITION_HALL_PARAM
-        value: cboUnit
-      - key: OPENAI_API_KEY
-        sync: false
+{
+  "name": "nutritrack-render-scraper",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "build": "npx playwright install chromium --with-deps"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "playwright": "^1.42.0",
+    "node-fetch": "^3.3.2"
+  }
+}
