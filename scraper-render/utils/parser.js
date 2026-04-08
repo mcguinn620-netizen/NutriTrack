@@ -9,6 +9,11 @@ const LAUNCH_ARGS = [
   '--disable-dev-shm-usage',
 ];
 
+const browser = await chromium.launch({
+  headless: true,
+  args: ["--no-sandbox", "--disable-setuid-sandbox"]
+});
+
 const normalizeText = (value = '') => value.replace(/\s+/g, ' ').trim();
 
 const parseNumber = (value = '') => {
