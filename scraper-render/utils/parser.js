@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { safeGoto } from './safeGoto.js';
 
 const NETNUTRITION_ROOT = 'https://netnutrition.bsu.edu';
 const NETNUTRITION_BASE = `${NETNUTRITION_ROOT}/NetNutrition/1`;
@@ -132,7 +133,7 @@ export async function scrapeNetNutrition() {
   const page = await context.newPage();
 
   try {
-    await page.goto(`${NETNUTRITION_BASE}#`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+    await safeGoto(page, `${NETNUTRITION_BASE}#`);
     await page.waitForTimeout(750);
 
     const hiddenFields = await extractHiddenFields(page);
