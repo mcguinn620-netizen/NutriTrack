@@ -3,56 +3,102 @@ import { load } from "https://esm.sh/cheerio@1.0.0-rc.12";
 
 const BASE = "https://netnutrition.bsu.edu/NetNutrition/1";
 
-serve(async (req) => {
+const COOKIE =
+  "CBORD.netnutrition2=NNexternalID=1; ASP.NET_SessionId=5x1yih45b3cspjkbccfl2nof";
+
+// ---------- ASP.NET helpers ----------
+async function fetchPage(url: string, options: any = {}) {
+  return await fetch(url, {
+    ...options,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": COOKIE,
+      ...options.headers,
+    },
+  });
+}
+
+function extractAspFields(html: string) {
+  const $ = load(html);
+  return {
+    viewstate: $("#__VIEWSTATE").val() as string,
+    eventvalidation: $("#__EVENTVALIDATION").val() as string,
+    viewstategen: $("#__VIEWSTATEGENERATOR").val() as string,
+    $,
+  };
+}
+
+// ---------- PARSER ----------
+type ParsedUnit = {
+  id: string;
+  name: string;
+};
+
+const decodeHtml = (text: string): string =>
+  text
+    .replaceAll("&amp;", "&")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .trim();
+
+const pushIfValid = (units: ParsedUnit[], id: string, name: string) => {
+  const normalizedId = id.trim();
+  const normalizedName = decodeHtml(name.replace(/<[^>]+>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalizedId || !normalizedName) return;
+  if (units.some((u) => u.id === normalizedId)) return;
+
+  units.push({ id: normalizedId, name: normalizedName });
+};
+
+function parseUnits(html: string): ParsedUnit[] {
+  const units: ParsedUnit[] = [];
+
+  // NetNutrition onclick pattern
+  const onclickRegex =
+    /<a[^>]*onclick=["'][^"']*unitsSelectUnit\((\d+)\)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+
+  for (const match of html.matchAll(onclickRegex)) {
+    pushIfValid(units, match[1] ?? "", match[2] ?? "");
+  }
+
+  return units;
+}
+
+// ---------- EDGE FUNCTION ----------
+serve(async () => {
   try {
-    // Allow GET + POST
-    if (req.method !== "GET" && req.method !== "POST") {
-      return new Response("Method not allowed", { status: 405 });
-    }
-
-    // STEP 1: Initial GET (session + cookies)
-    const res1 = await fetch(BASE, {
-      method: "GET",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-      },
-    });
-
-    const cookies = res1.headers.get("set-cookie") || "";
+    // STEP 1: GET
+    const res1 = await fetchPage(BASE, { method: "GET" });
     const html1 = await res1.text();
 
-    const $ = load(html1);
-
-    const viewstate = $("#__VIEWSTATE").val() as string;
-    const eventvalidation = $("#__EVENTVALIDATION").val() as string;
-    const viewstategen = $("#__VIEWSTATEGENERATOR").val() as string;
-
-    if (!viewstate || !eventvalidation) {
-      throw new Error("Missing ASP.NET hidden fields");
+    if (!html1 || html1.length < 1000) {
+      throw new Error("Initial HTML blocked");
     }
 
-    // STEP 2: Extract units
-    const units: any[] = [];
+    const { viewstate, eventvalidation, viewstategen } =
+      extractAspFields(html1);
 
-    $("#cbo_nn_unitDataList a").each((_, el) => {
-      const name = $(el).text().trim();
-      const onclick = $(el).attr("onclick") || "";
+    if (!viewstate || !eventvalidation) {
+      throw new Error("Missing ASP.NET fields");
+    }
 
-      const match = onclick.match(/unitsSelectUnit\((\d+)\)/);
-
-      if (match) {
-        units.push({
-          name,
-          id: match[1],
-        });
-      }
-    });
+    const units = parseUnits(html1);
 
     if (units.length === 0) {
       throw new Error("No units found");
     }
 
-    // STEP 3: POST (simulate unit click)
+    // STEP 2: POST select unit
     const selected = units[0];
 
     const body = new URLSearchParams({
@@ -63,36 +109,29 @@ serve(async (req) => {
       "__VIEWSTATEGENERATOR": viewstategen,
     });
 
-    const res2 = await fetch(BASE, {
+    const res2 = await fetchPage(BASE, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Cookie": cookies,
-        "User-Agent": "Mozilla/5.0",
-      },
       body,
     });
 
     const html2 = await res2.text();
 
     if (html2.includes("Start-up Error")) {
-      throw new Error("Session invalid / ASP.NET rejected request");
+      throw new Error("ASP.NET rejected request");
     }
 
     const $$ = load(html2);
-
-    const panels = {
-      childUnits: $$("#childUnitsPanel").attr("style") || null,
-      courses: $$("#coursesPanel").attr("style") || null,
-      items: $$("#itemPanel").attr("style") || null,
-    };
 
     return new Response(
       JSON.stringify({
         success: true,
         units,
         selectedUnit: selected,
-        panels,
+        panels: {
+          childUnits: $$("#childUnitsPanel").html() ? true : false,
+          courses: $$("#coursesPanel").html() ? true : false,
+          items: $$("#itemPanel").html() ? true : false,
+        },
       }),
       { headers: { "Content-Type": "application/json" } }
     );
