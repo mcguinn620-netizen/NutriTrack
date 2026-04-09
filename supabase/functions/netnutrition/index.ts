@@ -5,11 +5,16 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const BASE = "http://netnutrition.bsu.edu/NetNutrition/1";
 
+type ParsedEntity = {
+  id: string;
+  name: string;
+};
+
 // Helper: extract hidden ASP.NET fields
 function extractHidden(html: string) {
   const get = (name: string) => {
     const match = html.match(
-      new RegExp(`name="${name}".*?value="([^"]*)"`, "i")
+      new RegExp(`name=\"${name}\".*?value=\"([^\"]*)\"`, "i")
     );
     return match ? match[1] : "";
   };
@@ -21,20 +26,31 @@ function extractHidden(html: string) {
   };
 }
 
-// Helper: parse items from HTML
-function parseItems(html: string) {
-  const items: any[] = [];
-  const regex = /data-itemid="(\d+)".*?>(.*?)<\/a>/g;
+function parseEntitiesByDataAttribute(
+  html: string,
+  attrName: "unitid" | "menuid" | "itemid"
+): ParsedEntity[] {
+  const results: ParsedEntity[] = [];
+  const regex = new RegExp(
+    `<[^>]*data-${attrName}=\"(\\d+)\"[^>]*>([\\s\\S]*?)<\\/[^>]+>`,
+    "gi"
+  );
 
-  let match;
+  let match: RegExpExecArray | null;
   while ((match = regex.exec(html))) {
-    items.push({
+    results.push({
       id: match[1],
-      name: match[2].replace(/<[^>]+>/g, "").trim(),
+      name: match[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
     });
   }
 
-  return items;
+  return results;
+}
+
+function ensureStepHasResults(stepName: string, count: number) {
+  if (count === 0) {
+    throw new Error(`Step failed: ${stepName}`);
+  }
 }
 
 serve(async () => {
@@ -52,10 +68,16 @@ serve(async () => {
     const setCookie = res1.headers.get("set-cookie");
     if (setCookie) cookieJar.push(setCookie.split(";")[0]);
 
+    const units = parseEntitiesByDataAttribute(html1, "unitid");
+    console.log(`[netnutrition] units found: ${units.length}`);
+    ensureStepHasResults("parse units", units.length);
+
+    const unitId = units[0].id;
+
     // STEP 2 — Select Unit (Dining Hall)
     const body2 = new URLSearchParams({
       __EVENTTARGET: "ctl00$ContentPlaceHolder1$UnitList",
-      __EVENTARGUMENT: "",
+      __EVENTARGUMENT: unitId,
       __VIEWSTATE: hidden1.__VIEWSTATE,
       __VIEWSTATEGENERATOR: hidden1.__VIEWSTATEGENERATOR,
       __EVENTVALIDATION: hidden1.__EVENTVALIDATION,
@@ -70,61 +92,106 @@ serve(async () => {
       body: body2,
     });
 
-    const html2 = await res2.text();
-    const hidden2 = extractHidden(html2);
+    let htmlAfterUnitSelection = await res2.text();
+    let hiddenAfterUnitSelection = extractHidden(htmlAfterUnitSelection);
 
     // STEP 3 — Select First Child Unit (if exists)
-    const body3 = new URLSearchParams({
-      __EVENTTARGET: "ctl00$ContentPlaceHolder1$ChildUnitList",
-      __VIEWSTATE: hidden2.__VIEWSTATE,
-      __VIEWSTATEGENERATOR: hidden2.__VIEWSTATEGENERATOR,
-      __EVENTVALIDATION: hidden2.__EVENTVALIDATION,
+    if (/childUnitsPanel/i.test(htmlAfterUnitSelection)) {
+      const childUnits = parseEntitiesByDataAttribute(htmlAfterUnitSelection, "unitid");
+      ensureStepHasResults("parse child units", childUnits.length);
+
+      const childUnitId = childUnits[0].id;
+
+      const body3 = new URLSearchParams({
+        __EVENTTARGET: "ctl00$ContentPlaceHolder1$ChildUnitList",
+        __EVENTARGUMENT: childUnitId,
+        __VIEWSTATE: hiddenAfterUnitSelection.__VIEWSTATE,
+        __VIEWSTATEGENERATOR: hiddenAfterUnitSelection.__VIEWSTATEGENERATOR,
+        __EVENTVALIDATION: hiddenAfterUnitSelection.__EVENTVALIDATION,
+      });
+
+      const res3 = await fetch(`${BASE}/Unit/SelectUnitFromChildUnitsList`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Cookie: cookieJar.join("; "),
+        },
+        body: body3,
+      });
+
+      htmlAfterUnitSelection = await res3.text();
+      hiddenAfterUnitSelection = extractHidden(htmlAfterUnitSelection);
+    }
+
+    // STEP 4 — Parse menu IDs
+    const menus = parseEntitiesByDataAttribute(htmlAfterUnitSelection, "menuid");
+    console.log(`[netnutrition] menus found: ${menus.length}`);
+    ensureStepHasResults("parse menus", menus.length);
+
+    const menuId = menus[0].id;
+
+    // STEP 5 — Select menu
+    const bodyMenu = new URLSearchParams({
+      __EVENTTARGET: "ctl00$ContentPlaceHolder1$MenuList",
+      __EVENTARGUMENT: menuId,
+      __VIEWSTATE: hiddenAfterUnitSelection.__VIEWSTATE,
+      __VIEWSTATEGENERATOR: hiddenAfterUnitSelection.__VIEWSTATEGENERATOR,
+      __EVENTVALIDATION: hiddenAfterUnitSelection.__EVENTVALIDATION,
     });
 
-    const res3 = await fetch(`${BASE}/Unit/SelectUnitFromChildUnitsList`, {
+    const resMenu = await fetch(`${BASE}/Menu/SelectMenu`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Cookie: cookieJar.join("; "),
       },
-      body: body3,
+      body: bodyMenu,
     });
 
-    const html3 = await res3.text();
+    const htmlMenu = await resMenu.text();
 
-    // STEP 4 — Parse menu items
-    const items = parseItems(html3);
+    // STEP 6 — Parse item IDs
+    const items = parseEntitiesByDataAttribute(htmlMenu, "itemid");
+    console.log(`[netnutrition] items found: ${items.length}`);
+    ensureStepHasResults("parse items", items.length);
 
-    // STEP 5 — Fetch nutrition for first item (example)
-    let nutrition = null;
+    // STEP 7 — Select item (required)
+    const itemId = items[0].id;
+    const bodySelectItem = new URLSearchParams({
+      itemId,
+    });
 
-    if (items.length > 0) {
-      const itemId = items[0].id;
+    await fetch(`${BASE}/Menu/SelectItem`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieJar.join("; "),
+      },
+      body: bodySelectItem,
+    });
 
-      const body4 = new URLSearchParams({
-        itemId,
-      });
+    // STEP 8 — Fetch nutrition
+    const bodyNutrition = new URLSearchParams({
+      itemId,
+    });
 
-      const res4 = await fetch(
-        `${BASE}/NutritionDetail/ShowItemNutritionLabel`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Cookie: cookieJar.join("; "),
-          },
-          body: body4,
-        }
-      );
+    const resNutrition = await fetch(`${BASE}/NutritionDetail/ShowItemNutritionLabel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieJar.join("; "),
+      },
+      body: bodyNutrition,
+    });
 
-      nutrition = await res4.text();
-    }
+    const nutrition = await resNutrition.text();
 
     return new Response(
       JSON.stringify({
-        success: true,
+        units,
+        menus,
         items,
-        sampleNutrition: nutrition,
+        nutrition,
       }),
       { headers: { "Content-Type": "application/json" } }
     );
@@ -132,7 +199,7 @@ serve(async () => {
     return new Response(
       JSON.stringify({
         success: false,
-        error: err.message,
+        error: err instanceof Error ? err.message : "Unknown error",
       }),
       { status: 500 }
     );
