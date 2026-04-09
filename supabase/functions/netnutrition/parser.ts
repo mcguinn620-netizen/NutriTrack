@@ -1,15 +1,15 @@
 export function parseUnits(html: string) {
-const units: any[] = [];
+  const units: any[] = [];
 
-const regex = /data-unitid="(\d+)"[^>]*>([^<]+)/g;
+  const regex = /data-unitid="(\d+)"[^>]*>([^<]+)/g;
 
-let match;
-while ((match = regex.exec(html))) {
-units.push({
-id: match[1],
-name: match[2].trim(),
-});
-}
+  let match;
+  while ((match = regex.exec(html))) {
+    units.push({
+      id: match[1],
+      name: match[2].trim(),
+    });
+  }
 
-return units;
+  return units;
 }
