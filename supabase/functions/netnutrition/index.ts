@@ -1,11 +1,13 @@
-import { parseHiddenFields, extractUpdatePanel } from “./aspnet.ts”;
-import { parseUnits } from “./parser.ts”;
+import { parseHiddenFields, extractUpdatePanel } from "./aspnet.ts";
+import { parseUnits } from "./parser.ts";
 
-const BASE = “http://netnutrition.bsu.edu/NetNutrition/1”;
+const BASE = "http://netnutrition.bsu.edu/NetNutrition/1";
 
 Deno.serve(async () => {
 try {
 const jar: string[] = [];
+
+```
 const fetchWithCookies = async (url: string, options: any = {}) => {
   options.headers = options.headers || {};
   if (jar.length) {
@@ -68,7 +70,10 @@ return new Response(
     units,
   }),
   { headers: { "content-type": "application/json" } }
-); } catch (err) {
+);
+```
+
+} catch (err) {
 return new Response(
 JSON.stringify({
 success: false,
