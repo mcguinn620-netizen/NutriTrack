@@ -11,14 +11,26 @@ export function parseHiddenFields(html: string) {
   };
 }
 
-export function extractUpdatePanel(ajax: string) {
-  const parts = ajax.split("|");
+export function extractUpdatePanel(response: string) {
+  // CASE 1: ASP.NET AJAX format
+  if (response.includes("|updatePanel|")) {
+    const parts = response.split("|");
 
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i] === "updatePanel") {
-      return parts[i + 2];
+    for (let i = 0; i < parts.length; i++) {
+      if (parts[i] === "updatePanel") {
+        return parts[i + 2];
+      }
     }
   }
+
+  // CASE 2: FULL HTML fallback
+  if (response.includes("<html") || response.includes("<div")) {
+    console.log("[FALLBACK] Using full HTML response");
+    return response;
+  }
+
+  // CASE 3: DEBUG FAILURE
+  console.log("[RAW RESPONSE]", response.slice(0, 500));
 
   throw new Error("Failed to extract update panel");
 }

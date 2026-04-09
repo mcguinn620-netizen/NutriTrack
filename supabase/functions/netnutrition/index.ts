@@ -42,8 +42,11 @@ Deno.serve(async () => {
       {
         method: "POST",
         headers: {
-          "content-type": "application/x-www-form-urlencoded",
+          "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
           "x-requested-with": "XMLHttpRequest",
+          "accept": "*/*",
+          "origin": "http://netnutrition.bsu.edu",
+          "referer": BASE,
         },
         body: body.toString(),
       }
