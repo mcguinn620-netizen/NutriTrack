@@ -14,7 +14,9 @@ const decodeHtml = (text: string): string =>
 
 const pushIfValid = (units: ParsedUnit[], id: string, name: string) => {
   const normalizedId = id.trim();
-  const normalizedName = decodeHtml(name.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ");
+  const normalizedName = decodeHtml(name.replace(/<[^>]+>/g, " "))
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (!normalizedId || !normalizedName) return;
   if (units.some((unit) => unit.id === normalizedId)) return;
@@ -25,41 +27,41 @@ const pushIfValid = (units: ParsedUnit[], id: string, name: string) => {
 export function parseUnits(html: string): ParsedUnit[] {
   const units: ParsedUnit[] = [];
 
-  // Strategy 1: Elements containing data-unitid
-  const dataUnitRegex = /data-unitid=["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\//gi;
+  // ✅ STRATEGY 1 (PRIMARY): NetNutrition onclick pattern
+  const onclickRegex =
+    /<a[^>]*onclick=["'][^"']*unitsSelectUnit\((\d+)\)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+
+  for (const match of html.matchAll(onclickRegex)) {
+    const id = match[1] ?? "";
+    const name = match[2] ?? "";
+    pushIfValid(units, id, name);
+  }
+
+  if (units.length > 0) return units;
+
+  // STRATEGY 2: data-unitid
+  const dataUnitRegex =
+    /data-unitid=["']?([^"'\s>]+)["']?[^>]*>([\s\S]*?)<\//gi;
+
   for (const match of html.matchAll(dataUnitRegex)) {
     pushIfValid(units, match[1] ?? "", match[2] ?? "");
   }
+
   if (units.length > 0) return units;
 
-  // Strategy 2: Anchors containing unit query or known data attrs
+  // STRATEGY 3: anchor fallback
   const anchorRegex = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+
   for (const match of html.matchAll(anchorRegex)) {
     const attrs = match[1] ?? "";
     const name = match[2] ?? "";
+
     const idMatch =
-      attrs.match(/data-unitid=["']?([^"'\s>]+)["']?/i) ??
       attrs.match(/[?&]unitid=(\d+)/i) ??
       attrs.match(/\bunit(?:id)?[-_]?(\d+)\b/i);
 
     if (idMatch?.[1]) {
       pushIfValid(units, idMatch[1], name);
-    }
-  }
-  if (units.length > 0) return units;
-
-  // Strategy 3: List items with unit-like ids
-  const listItemRegex = /<li\b([^>]*)>([\s\S]*?)<\/li>/gi;
-  for (const match of html.matchAll(listItemRegex)) {
-    const attrs = match[1] ?? "";
-    const content = match[2] ?? "";
-    const idMatch =
-      attrs.match(/data-unitid=["']?([^"'\s>]+)["']?/i) ??
-      attrs.match(/id=["'][^"']*(\d+)["']/i) ??
-      content.match(/data-unitid=["']?([^"'\s>]+)["']?/i);
-
-    if (idMatch?.[1]) {
-      pushIfValid(units, idMatch[1], content);
     }
   }
 
