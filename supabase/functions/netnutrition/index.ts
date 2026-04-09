@@ -53,6 +53,68 @@ function ensureStepHasResults(stepName: string, count: number) {
   }
 }
 
+function appendCookies(cookieJar: string[], response: Response) {
+  const setCookie = response.headers.get("set-cookie");
+  if (!setCookie) return;
+
+  const cookiePair = setCookie.split(";")[0];
+  const cookieName = cookiePair.split("=")[0];
+  const existingIndex = cookieJar.findIndex((cookie) =>
+    cookie.startsWith(`${cookieName}=`)
+  );
+
+  if (existingIndex >= 0) {
+    cookieJar[existingIndex] = cookiePair;
+    return;
+  }
+
+  cookieJar.push(cookiePair);
+}
+
+function extractAjaxUpdatePanelHtml(ajaxResponse: string): string {
+  const marker = "|updatePanel|ContentPlaceHolder1_updPnl|";
+  const startIndex = ajaxResponse.indexOf(marker);
+
+  if (startIndex === -1) {
+    console.log(
+      `[netnutrition] ajax parse failed (missing updatePanel marker): ${ajaxResponse.slice(0, 500)}`
+    );
+    throw new Error("Failed to parse AJAX updatePanel response");
+  }
+
+  const startOfPanelHtml = startIndex + marker.length;
+  const tail = ajaxResponse.slice(startOfPanelHtml);
+  const endMarkers = [
+    "|hiddenField|",
+    "|asyncPostBackControlIDs|",
+    "|postBackControlIDs|",
+    "|scriptBlock|",
+    "|scriptStartupBlock|",
+    "|expando|",
+    "|onSubmit|",
+    "|pageTitle|",
+    "|focus|",
+    "|updatePanel|",
+  ];
+
+  let endIndex = -1;
+  for (const markerName of endMarkers) {
+    const markerIndex = tail.indexOf(markerName);
+    if (markerIndex !== -1 && (endIndex === -1 || markerIndex < endIndex)) {
+      endIndex = markerIndex;
+    }
+  }
+
+  if (endIndex === -1) {
+    console.log(
+      `[netnutrition] ajax parse failed (missing panel end marker): ${ajaxResponse.slice(0, 500)}`
+    );
+    throw new Error("Failed to parse AJAX updatePanel response");
+  }
+
+  return tail.slice(0, endIndex);
+}
+
 serve(async () => {
   try {
     const cookieJar: string[] = [];
@@ -65,19 +127,12 @@ serve(async () => {
     const html1 = await res1.text();
     const hidden1 = extractHidden(html1);
 
-    const setCookie = res1.headers.get("set-cookie");
-    if (setCookie) cookieJar.push(setCookie.split(";")[0]);
+    appendCookies(cookieJar, res1);
 
-    const units = parseEntitiesByDataAttribute(html1, "unitid");
-    console.log(`[netnutrition] units found: ${units.length}`);
-    ensureStepHasResults("parse units", units.length);
-
-    const unitId = units[0].id;
-
-    // STEP 2 — Select Unit (Dining Hall)
+    // STEP 2 — CRITICAL FIRST AJAX ACTION (load units)
     const body2 = new URLSearchParams({
       __EVENTTARGET: "ctl00$ContentPlaceHolder1$UnitList",
-      __EVENTARGUMENT: unitId,
+      __EVENTARGUMENT: "0",
       __VIEWSTATE: hidden1.__VIEWSTATE,
       __VIEWSTATEGENERATOR: hidden1.__VIEWSTATEGENERATOR,
       __EVENTVALIDATION: hidden1.__EVENTVALIDATION,
@@ -87,111 +142,47 @@ serve(async () => {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
         Cookie: cookieJar.join("; "),
       },
       body: body2,
     });
 
-    let htmlAfterUnitSelection = await res2.text();
-    let hiddenAfterUnitSelection = extractHidden(htmlAfterUnitSelection);
+    appendCookies(cookieJar, res2);
+    const ajaxResponse = await res2.text();
+    const ajaxPanelHtml = extractAjaxUpdatePanelHtml(ajaxResponse);
 
-    // STEP 3 — Select First Child Unit (if exists)
-    if (/childUnitsPanel/i.test(htmlAfterUnitSelection)) {
-      const childUnits = parseEntitiesByDataAttribute(htmlAfterUnitSelection, "unitid");
-      ensureStepHasResults("parse child units", childUnits.length);
+    const units = parseEntitiesByDataAttribute(ajaxPanelHtml, "unitid");
+    console.log(`[netnutrition] units found: ${units.length}`);
+    ensureStepHasResults("parse units", units.length);
 
-      const childUnitId = childUnits[0].id;
-
-      const body3 = new URLSearchParams({
-        __EVENTTARGET: "ctl00$ContentPlaceHolder1$ChildUnitList",
-        __EVENTARGUMENT: childUnitId,
-        __VIEWSTATE: hiddenAfterUnitSelection.__VIEWSTATE,
-        __VIEWSTATEGENERATOR: hiddenAfterUnitSelection.__VIEWSTATEGENERATOR,
-        __EVENTVALIDATION: hiddenAfterUnitSelection.__EVENTVALIDATION,
-      });
-
-      const res3 = await fetch(`${BASE}/Unit/SelectUnitFromChildUnitsList`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Cookie: cookieJar.join("; "),
-        },
-        body: body3,
-      });
-
-      htmlAfterUnitSelection = await res3.text();
-      hiddenAfterUnitSelection = extractHidden(htmlAfterUnitSelection);
-    }
-
-    // STEP 4 — Parse menu IDs
-    const menus = parseEntitiesByDataAttribute(htmlAfterUnitSelection, "menuid");
-    console.log(`[netnutrition] menus found: ${menus.length}`);
-    ensureStepHasResults("parse menus", menus.length);
-
-    const menuId = menus[0].id;
-
-    // STEP 5 — Select menu
-    const bodyMenu = new URLSearchParams({
-      __EVENTTARGET: "ctl00$ContentPlaceHolder1$MenuList",
-      __EVENTARGUMENT: menuId,
-      __VIEWSTATE: hiddenAfterUnitSelection.__VIEWSTATE,
-      __VIEWSTATEGENERATOR: hiddenAfterUnitSelection.__VIEWSTATEGENERATOR,
-      __EVENTVALIDATION: hiddenAfterUnitSelection.__EVENTVALIDATION,
+    // STEP 3 — Select first unit using same endpoint
+    const unitId = units[0].id;
+    const hiddenAfterAjax = extractHidden(ajaxPanelHtml);
+    const body3 = new URLSearchParams({
+      __EVENTTARGET: "ctl00$ContentPlaceHolder1$UnitList",
+      __EVENTARGUMENT: unitId,
+      __VIEWSTATE: hiddenAfterAjax.__VIEWSTATE || hidden1.__VIEWSTATE,
+      __VIEWSTATEGENERATOR:
+        hiddenAfterAjax.__VIEWSTATEGENERATOR || hidden1.__VIEWSTATEGENERATOR,
+      __EVENTVALIDATION:
+        hiddenAfterAjax.__EVENTVALIDATION || hidden1.__EVENTVALIDATION,
     });
 
-    const resMenu = await fetch(`${BASE}/Menu/SelectMenu`, {
+    const res3 = await fetch(`${BASE}/Unit/SelectUnitFromSideBar`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
         Cookie: cookieJar.join("; "),
       },
-      body: bodyMenu,
+      body: body3,
     });
-
-    const htmlMenu = await resMenu.text();
-
-    // STEP 6 — Parse item IDs
-    const items = parseEntitiesByDataAttribute(htmlMenu, "itemid");
-    console.log(`[netnutrition] items found: ${items.length}`);
-    ensureStepHasResults("parse items", items.length);
-
-    // STEP 7 — Select item (required)
-    const itemId = items[0].id;
-    const bodySelectItem = new URLSearchParams({
-      itemId,
-    });
-
-    await fetch(`${BASE}/Menu/SelectItem`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: cookieJar.join("; "),
-      },
-      body: bodySelectItem,
-    });
-
-    // STEP 8 — Fetch nutrition
-    const bodyNutrition = new URLSearchParams({
-      itemId,
-    });
-
-    const resNutrition = await fetch(`${BASE}/NutritionDetail/ShowItemNutritionLabel`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Cookie: cookieJar.join("; "),
-      },
-      body: bodyNutrition,
-    });
-
-    const nutrition = await resNutrition.text();
+    appendCookies(cookieJar, res3);
 
     return new Response(
       JSON.stringify({
         units,
-        menus,
-        items,
-        nutrition,
       }),
       { headers: { "Content-Type": "application/json" } }
     );
