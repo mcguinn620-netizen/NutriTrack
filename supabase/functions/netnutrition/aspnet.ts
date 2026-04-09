@@ -1,7 +1,17 @@
-export function parseHiddenFields(html: string) {
+export type AspNetHiddenFields = {
+  __VIEWSTATE: string;
+  __VIEWSTATEGENERATOR: string;
+  __EVENTVALIDATION: string;
+};
+
+export function parseHiddenFields(html: string): AspNetHiddenFields {
   const get = (name: string) => {
-    const match = html.match(new RegExp(`id="${name}" value="([^"]+)"`));
-    return match ? match[1] : "";
+    const pattern = new RegExp(
+      `(?:id|name)=["']${name}["'][^>]*value=["']([^"']*)["']`,
+      "i",
+    );
+    const match = html.match(pattern);
+    return match?.[1] ?? "";
   };
 
   return {
@@ -11,26 +21,31 @@ export function parseHiddenFields(html: string) {
   };
 }
 
-export function extractUpdatePanel(response: string) {
-  // CASE 1: ASP.NET AJAX format
+export function extractUpdatePanel(response: string): string {
+  if (!response) {
+    console.log("[RAW RESPONSE]", response);
+    throw new Error("Failed to extract update panel: empty response");
+  }
+
+  // ASP.NET AJAX postback payload format: ...|updatePanel|panelId|<html>...|
   if (response.includes("|updatePanel|")) {
     const parts = response.split("|");
 
     for (let i = 0; i < parts.length; i++) {
       if (parts[i] === "updatePanel") {
-        return parts[i + 2];
+        const candidate = parts[i + 2] ?? "";
+        if (candidate.trim()) {
+          return candidate;
+        }
       }
     }
   }
 
-  // CASE 2: FULL HTML fallback
-  if (response.includes("<html") || response.includes("<div")) {
-    console.log("[FALLBACK] Using full HTML response");
+  // Fallback for full HTML responses
+  if (/<(?:html|body|div|ul|li|a)\b/i.test(response)) {
     return response;
   }
 
-  // CASE 3: DEBUG FAILURE
-  console.log("[RAW RESPONSE]", response.slice(0, 500));
-
+  console.log("[RAW RESPONSE]", response.slice(0, 2000));
   throw new Error("Failed to extract update panel");
 }
