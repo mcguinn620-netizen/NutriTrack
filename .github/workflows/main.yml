@@ -1,0 +1,9 @@
+# 1) Discard only the lockfile local modification
+git restore pnpm-lock.yaml
+
+# 2) Verify nothing is dirty
+git status
+
+# 3) Optional: sync with remote safely
+git fetch origin
+git pull --ff-only
