@@ -1,253 +1,140 @@
-import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import { corsHeaders } from '../_shared/cors.ts';
+// Supabase Edge Function — NetNutrition ASP.NET POST Scraper
+// Zero browser • Works with ViewState • Handles modal + session
 
-const BASE_URL = 'https://netnutrition.bsu.edu/NetNutrition';
-const DEFAULT_TIMEOUT_MS = 15000;
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
-const jsonResponse = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      ...corsHeaders,
-      'Content-Type': 'application/json',
-      'Access-Control-Allow-Origin': '*',
-    },
-  });
+const BASE = "http://netnutrition.bsu.edu/NetNutrition/1";
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// Helper: extract hidden ASP.NET fields
+function extractHidden(html: string) {
+  const get = (name: string) => {
+    const match = html.match(
+      new RegExp(`name="${name}".*?value="([^"]*)"`, "i")
+    );
+    return match ? match[1] : "";
+  };
 
-function extractHidden(html: string, name: string): string {
-  const escaped = escapeRegExp(name);
-  const inputRegex = new RegExp(
-    `<input[^>]*name=["']${escaped}["'][^>]*value=["']([\\s\\S]*?)["'][^>]*>`,
-    'i',
-  );
-  const match = html.match(inputRegex);
-  return match?.[1] ?? '';
-}
-
-function extractFields(html: string) {
   return {
-    viewstate: extractHidden(html, '__VIEWSTATE'),
-    eventvalidation: extractHidden(html, '__EVENTVALIDATION'),
-    viewstategenerator: extractHidden(html, '__VIEWSTATEGENERATOR'),
+    __VIEWSTATE: get("__VIEWSTATE"),
+    __VIEWSTATEGENERATOR: get("__VIEWSTATEGENERATOR"),
+    __EVENTVALIDATION: get("__EVENTVALIDATION"),
   };
 }
 
-function getSetCookieHeaders(headers: Headers): string[] {
-  const withGetSetCookie = headers as Headers & { getSetCookie?: () => string[] };
-  if (typeof withGetSetCookie.getSetCookie === 'function') {
-    return withGetSetCookie.getSetCookie();
+// Helper: parse items from HTML
+function parseItems(html: string) {
+  const items: any[] = [];
+  const regex = /data-itemid="(\d+)".*?>(.*?)<\/a>/g;
+
+  let match;
+  while ((match = regex.exec(html))) {
+    items.push({
+      id: match[1],
+      name: match[2].replace(/<[^>]+>/g, "").trim(),
+    });
   }
 
-  const combined = headers.get('set-cookie');
-  if (!combined) return [];
-
-  // Fallback for environments that merge multiple Set-Cookie headers into one line.
-  return combined.split(/,(?=[^;]+=[^;]+)/g).map((cookie) => cookie.trim());
+  return items;
 }
 
-class Session {
-  private cookies = new Map<string, string>();
-
-  update(response: Response): void {
-    for (const setCookie of getSetCookieHeaders(response.headers)) {
-      const [pair] = setCookie.split(';');
-      if (!pair) continue;
-
-      const separatorIndex = pair.indexOf('=');
-      if (separatorIndex <= 0) continue;
-
-      const name = pair.slice(0, separatorIndex).trim();
-      const value = pair.slice(separatorIndex + 1).trim();
-      if (!name) continue;
-      this.cookies.set(name, value);
-    }
-  }
-
-  private cookieHeader(): string {
-    return [...this.cookies.entries()]
-      .map(([name, value]) => `${name}=${value}`)
-      .join('; ');
-  }
-
-  headers(extra: Record<string, string> = {}): HeadersInit {
-    const cookie = this.cookieHeader();
-
-    return {
-      'User-Agent':
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-      Accept: 'application/json, text/plain, */*',
-      ...(cookie ? { Cookie: cookie } : {}),
-      ...extra,
-    };
-  }
-}
-
-async function fetchWithTimeout(
-  url: string,
-  options: RequestInit,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort('Request timeout'), timeoutMs);
-
+serve(async () => {
   try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      redirect: 'follow',
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
+    const cookieJar: string[] = [];
 
-async function fetchJsonWithSession(
-  session: Session,
-  path: string,
-  payload: Record<string, unknown>,
-): Promise<any> {
-  const response = await fetchWithTimeout(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: session.headers({
-      'Content-Type': 'application/json; charset=UTF-8',
-      Accept: 'application/json, text/javascript, */*; q=0.01',
-      'X-Requested-With': 'XMLHttpRequest',
-      Origin: 'https://netnutrition.bsu.edu',
-      Referer: `${BASE_URL}/1`,
-    }),
-    body: JSON.stringify(payload),
-  });
-
-  session.update(response);
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`POST ${path} failed (${response.status}): ${body.slice(0, 300)}`);
-  }
-
-  return await response.json();
-}
-
-serve(async (req: Request) => {
-  if (req.method === 'OPTIONS') return jsonResponse({ ok: true }, 200);
-  if (req.method !== 'GET' && req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed. Use GET or POST.' }, 405);
-  }
-
-  const session = new Session();
-
-  try {
-    const initialResponse = await fetchWithTimeout(`${BASE_URL}/1`, {
-      method: 'GET',
-      headers: session.headers({ Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' }),
+    // STEP 1 — Initial GET (establish session + ViewState)
+    const res1 = await fetch(BASE, {
+      headers: { "User-Agent": "Mozilla/5.0" },
     });
 
-    session.update(initialResponse);
+    const html1 = await res1.text();
+    const hidden1 = extractHidden(html1);
 
-    if (!initialResponse.ok) {
-      const body = await initialResponse.text();
-      throw new Error(`Initial page load failed (${initialResponse.status}): ${body.slice(0, 300)}`);
-    }
+    const setCookie = res1.headers.get("set-cookie");
+    if (setCookie) cookieJar.push(setCookie.split(";")[0]);
 
-    const initialHtml = await initialResponse.text();
-    const fields = extractFields(initialHtml);
-
-    if (!fields.viewstate || !fields.eventvalidation) {
-      throw new Error('Required ASP.NET hidden fields (__VIEWSTATE / __EVENTVALIDATION) were missing.');
-    }
-
-    const continueForm = new URLSearchParams({
-      __EVENTTARGET: '',
-      __EVENTARGUMENT: '',
-      __VIEWSTATE: fields.viewstate,
-      __EVENTVALIDATION: fields.eventvalidation,
-      __VIEWSTATEGENERATOR: fields.viewstategenerator,
-      'ctl00$MainContent$btnContinue': 'Continue',
+    // STEP 2 — Select Unit (Dining Hall)
+    const body2 = new URLSearchParams({
+      __EVENTTARGET: "ctl00$ContentPlaceHolder1$UnitList",
+      __EVENTARGUMENT: "",
+      __VIEWSTATE: hidden1.__VIEWSTATE,
+      __VIEWSTATEGENERATOR: hidden1.__VIEWSTATEGENERATOR,
+      __EVENTVALIDATION: hidden1.__EVENTVALIDATION,
     });
 
-    const continueResponse = await fetchWithTimeout(`${BASE_URL}/1`, {
-      method: 'POST',
-      headers: session.headers({
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        Origin: 'https://netnutrition.bsu.edu',
-        Referer: `${BASE_URL}/1`,
-      }),
-      body: continueForm.toString(),
+    const res2 = await fetch(`${BASE}/Unit/SelectUnitFromSideBar`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieJar.join("; "),
+      },
+      body: body2,
     });
 
-    session.update(continueResponse);
+    const html2 = await res2.text();
+    const hidden2 = extractHidden(html2);
 
-    if (!continueResponse.ok) {
-      const body = await continueResponse.text();
-      throw new Error(`Continue postback failed (${continueResponse.status}): ${body.slice(0, 300)}`);
-    }
+    // STEP 3 — Select First Child Unit (if exists)
+    const body3 = new URLSearchParams({
+      __EVENTTARGET: "ctl00$ContentPlaceHolder1$ChildUnitList",
+      __VIEWSTATE: hidden2.__VIEWSTATE,
+      __VIEWSTATEGENERATOR: hidden2.__VIEWSTATEGENERATOR,
+      __EVENTVALIDATION: hidden2.__EVENTVALIDATION,
+    });
 
-    const root = await fetchJsonWithSession(session, '/Unit/SelectUnitFromSideBar', { unitOid: 1 });
-    const units = root?.childUnitsPanel?.units;
+    const res3 = await fetch(`${BASE}/Unit/SelectUnitFromChildUnitsList`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookieJar.join("; "),
+      },
+      body: body3,
+    });
 
-    if (!Array.isArray(units)) {
-      throw new Error('Dining halls were not returned from SelectUnitFromSideBar.');
-    }
+    const html3 = await res3.text();
 
-    const halls = [];
+    // STEP 4 — Parse menu items
+    const items = parseItems(html3);
 
-    for (const hall of units) {
-      const hallData = await fetchJsonWithSession(session, '/Unit/SelectUnitFromSideBar', {
-        unitOid: hall.unitOid,
+    // STEP 5 — Fetch nutrition for first item (example)
+    let nutrition = null;
+
+    if (items.length > 0) {
+      const itemId = items[0].id;
+
+      const body4 = new URLSearchParams({
+        itemId,
       });
 
-      const menus = Array.isArray(hallData?.menuPanel?.menus) ? hallData.menuPanel.menus : [];
+      const res4 = await fetch(
+        `${BASE}/NutritionDetail/ShowItemNutritionLabel`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Cookie: cookieJar.join("; "),
+          },
+          body: body4,
+        }
+      );
 
-      const hallResult = {
-        id: hall.unitOid,
-        name: hall.name,
-        menus: [] as Array<{ id: number; name: string; items: Array<{ id: number; name: string }> }>,
-      };
-
-      for (const menu of menus) {
-        const menuData = await fetchJsonWithSession(session, '/Menu/SelectMenu', {
-          menuOid: menu.menuOid,
-        });
-
-        const items = Array.isArray(menuData?.itemPanel?.items) ? menuData.itemPanel.items : [];
-
-        hallResult.menus.push({
-          id: menu.menuOid,
-          name: menu.name,
-          items: items.map((item: { recipeOid: number; name: string }) => ({
-            id: item.recipeOid,
-            name: item.name,
-          })),
-        });
-      }
-
-      halls.push(hallResult);
+      nutrition = await res4.text();
     }
 
-    return jsonResponse(
-      {
+    return new Response(
+      JSON.stringify({
         success: true,
-        timestamp: new Date().toISOString(),
-        halls,
-      },
-      200,
+        items,
+        sampleNutrition: nutrition,
+      }),
+      { headers: { "Content-Type": "application/json" } }
     );
-  } catch (error) {
-    console.error('[netnutrition edge] scrape failed:', error);
-
-    return jsonResponse(
-      {
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
         success: false,
-        error: 'Failed to scrape NetNutrition.',
-        details: error instanceof Error ? error.message : String(error),
-        timestamp: new Date().toISOString(),
-      },
-      502,
+        error: err.message,
+      }),
+      { status: 500 }
     );
   }
 });
