@@ -12,7 +12,14 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsArbitraryLoads": false,
+          "NSExceptionDomains": {
+            "netnutrition.bsu.edu": {
+              "NSIncludesSubdomains": true,
+              "NSTemporaryExceptionAllowsInsecureHTTPLoads": false,
+              "NSTemporaryExceptionMinimumTLSVersion": "TLSv1.2"
+            }
+          }
         }
       }
     },
