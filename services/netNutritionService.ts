@@ -1,12 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient } from '@supabase/supabase-js';
 
 const CACHE_PREFIX = '@nn_v4_';
 const TTL_MENU = 30 * 60 * 1000;
 const TTL_NUTRITION = 24 * 60 * 60 * 1000;
-const SUPABASE_URL = 'https://drtuuuqtgihqvzcripec.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydHV1dXF0Z2locXZ6Y3JpcGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NjAzNjksImV4cCI6MjA5MTQzNjM2OX0.ls4fI6gvxbEtiFxJhtzzYfFG6tf95Av4V5Z1flYNk-k';
-const REST_BASE = `${SUPABASE_URL}/rest/v1`;
-const SCRAPE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/menu`;
+export const SUPABASE_URL = 'https://drtuuuqtgihqvzcripec.supabase.co';
+export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydHV1dXF0Z2locXZ6Y3JpcGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NjAzNjksImV4cCI6MjA5MTQzNjM2OX0.ls4fI6gvxbEtiFxJhtzzYfFG6tf95Av4V5Z1flYNk-k';
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const FUNCTION_URL = 'https://drtuuuqtgihqvzcripec.supabase.co/functions/v1/netnutrition-scrape';
 
 export interface NNLocation {
   oid: number;
@@ -56,6 +57,12 @@ interface SupabaseCategory {
   dining_halls?: { id?: string; name?: string } | Array<{ id?: string; name?: string }>;
 }
 
+interface SupabaseStation {
+  id?: string;
+  name?: string;
+  dining_halls?: { id?: string; name?: string } | Array<{ id?: string; name?: string }>;
+}
+
 interface SupabaseNutritionFact {
   item_id?: string;
   calories?: number | string | null;
@@ -79,6 +86,7 @@ interface SupabaseFoodItem {
   sugar?: number | string | null;
   serving_size?: string | null;
   serving?: string | null;
+  stations?: SupabaseStation | SupabaseStation[] | null;
   menu_categories?: SupabaseCategory | SupabaseCategory[] | null;
   nutrition_facts?: SupabaseNutritionFact | SupabaseNutritionFact[] | null;
 }
@@ -138,14 +146,6 @@ async function setCached<T>(key: string, data: T): Promise<void> {
   }
 }
 
-function headers() {
-  return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    'Content-Type': 'application/json',
-  };
-}
-
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value === 'string') {
@@ -169,6 +169,12 @@ function categoryFromRow(row: SupabaseFoodItem): SupabaseCategory | null {
   return row.menu_categories;
 }
 
+function stationFromRow(row: SupabaseFoodItem): SupabaseStation | null {
+  if (!row.stations) return null;
+  if (Array.isArray(row.stations)) return row.stations[0] ?? null;
+  return row.stations;
+}
+
 function hallFromCategory(category: SupabaseCategory | null): { id: string; name: string } | null {
   if (!category?.dining_halls) return null;
   if (Array.isArray(category.dining_halls)) {
@@ -182,6 +188,19 @@ function hallFromCategory(category: SupabaseCategory | null): { id: string; name
   };
 }
 
+function hallFromStation(station: SupabaseStation | null): { id: string; name: string } | null {
+  if (!station?.dining_halls) return null;
+  if (Array.isArray(station.dining_halls)) {
+    const hall = station.dining_halls[0];
+    if (!hall) return null;
+    return { id: hall.id ?? '', name: hall.name ?? '' };
+  }
+  return {
+    id: station.dining_halls.id ?? '',
+    name: station.dining_halls.name ?? '',
+  };
+}
+
 function nutritionFromRow(row: SupabaseFoodItem): SupabaseNutritionFact | null {
   if (!row.nutrition_facts) return null;
   if (Array.isArray(row.nutrition_facts)) return row.nutrition_facts[0] ?? null;
@@ -189,38 +208,53 @@ function nutritionFromRow(row: SupabaseFoodItem): SupabaseNutritionFact | null {
 }
 
 async function fetchDiningHalls(): Promise<SupabaseHall[]> {
-  const params = new URLSearchParams({ select: 'id,name', order: 'name.asc' });
-  const response = await fetch(`${REST_BASE}/dining_halls?${params.toString()}`, {
-    method: 'GET',
-    headers: headers(),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch dining halls (${response.status})`);
+  const { data, error } = await supabase.from('dining_halls').select('id,name').order('name');
+  console.log('Supabase data:', data);
+  console.log('Supabase error:', error);
+  if (error) {
+    throw error;
   }
-
-  const halls = (await response.json()) as SupabaseHall[];
+  const halls = (data ?? []) as SupabaseHall[];
   return Array.isArray(halls) ? halls : [];
 }
 
-async function fetchFoodItems(): Promise<SupabaseFoodItem[]> {
-  const params = new URLSearchParams({
-    select:
-      'id,name,serving_size,serving,category_id,menu_categories(id,name,hall_id,dining_halls(id,name)),nutrition_facts(item_id,calories,protein,carbs,fat)',
-    order: 'name.asc',
-  });
+export async function getFoodItems() {
+  const { data, error } = await supabase.from('food_items').select(`
+      *,
+      stations (
+        name,
+        dining_halls ( name )
+      )
+    `);
 
-  const response = await fetch(`${REST_BASE}/food_items?${params.toString()}`, {
-    method: 'GET',
-    headers: headers(),
-  });
+  console.log('Supabase data:', data);
+  console.log('Supabase error:', error);
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch food items (${response.status})`);
+  if (error) {
+    console.error('Supabase error:', error);
+    throw error;
   }
 
-  const items = (await response.json()) as SupabaseFoodItem[];
-  return Array.isArray(items) ? items : [];
+  return data;
+}
+
+export async function triggerScrape() {
+  const res = await fetch(FUNCTION_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      apikey: SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error('Scrape failed:', text);
+    throw new Error('Scrape failed');
+  }
+
+  return await res.json();
 }
 
 function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDataset {
@@ -249,12 +283,14 @@ function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDa
     if (!itemId || !itemName) continue;
 
     const category = categoryFromRow(row);
-    const categoryId = String(category?.id ?? row.category_id ?? 'all-items').trim() || 'all-items';
-    const categoryName = String(category?.name ?? 'All Items').trim() || 'All Items';
+    const station = stationFromRow(row);
+    const categoryId = String(category?.id ?? station?.id ?? row.category_id ?? 'all-items').trim() || 'all-items';
+    const categoryName = String(category?.name ?? station?.name ?? 'All Items').trim() || 'All Items';
 
     const categoryHall = hallFromCategory(category);
-    const hallId = String(categoryHall?.id ?? '').trim();
-    const hallName = String(categoryHall?.name ?? '').trim();
+    const stationHall = hallFromStation(station);
+    const hallId = String(categoryHall?.id ?? stationHall?.id ?? '').trim();
+    const hallName = String(categoryHall?.name ?? stationHall?.name ?? '').trim();
 
     let hall = hallId ? hallById.get(hallId) : undefined;
     if (!hall) {
@@ -323,23 +359,15 @@ async function getDataset(forceRefresh = false): Promise<ParsedDataset> {
     if (cached) return cached;
   }
 
-  const [halls, items] = await Promise.all([fetchDiningHalls(), fetchFoodItems()]);
-  const dataset = buildDataset(halls, items);
+  const [halls, items] = await Promise.all([fetchDiningHalls(), getFoodItems()]);
+  const dataset = buildDataset(halls, (items ?? []) as SupabaseFoodItem[]);
   await setCached('dataset', dataset);
   return dataset;
 }
 
 export const netNutritionService = {
   async refreshDataFromEdge(): Promise<void> {
-    const response = await fetch(SCRAPE_FUNCTION_URL, {
-      method: 'GET',
-      headers: headers(),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Supabase scrape refresh failed (${response.status}): ${text.slice(0, 200)}`);
-    }
+    await triggerScrape();
   },
 
   async getLocations(): Promise<NNLocation[]> {
