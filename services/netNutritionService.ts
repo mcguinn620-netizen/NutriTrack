@@ -1,37 +1,23 @@
-/**
- * netNutritionService.ts
- *
- * Client-side service calling the Supabase Edge Function
- * which proxies BSU NetNutrition (CBORD) live data.
- *
- * API flow (from CBORD_NN_UI.js):
- *   units → menus (per unit) → courses (per menu) → items (per course) → nutrition (per item)
- *
- * Results are cached in AsyncStorage with TTLs.
- */
-
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const CACHE_PREFIX = '@nn_v3_';
-const TTL_MENU = 30 * 60 * 1000;           // 30 min — locations, menus, courses, items
-const TTL_NUTRITION = 24 * 60 * 60 * 1000; // 24 h  — nutrition facts
-const SCRAPE_CACHE_KEY = 'scrape_payload';
-const NETNUTRITION_FUNCTION_URL = 'https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
+const CACHE_PREFIX = '@nn_v4_';
+const TTL_MENU = 30 * 60 * 1000;
+const TTL_NUTRITION = 24 * 60 * 60 * 1000;
+const SUPABASE_URL = 'https://drtuuuqtgihqvzcripec.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydHV1dXF0Z2locXZ6Y3JpcGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NjAzNjksImV4cCI6MjA5MTQzNjM2OX0.ls4fI6gvxbEtiFxJhtzzYfFG6tf95Av4V5Z1flYNk-k';
+const REST_BASE = `${SUPABASE_URL}/rest/v1`;
+const SCRAPE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/netnutrition-scrape`;
 
 export interface NNLocation {
   oid: number;
   name: string;
 }
 
-/** A menu period: Breakfast, Lunch, Dinner, etc. */
 export interface NNMenu {
   oid: number;
   name: string;
 }
 
-/** A course/station within a menu: Entrees, Sides, Grill, Pizza, etc. */
 export interface NNCourse {
   oid: number;
   name: string;
@@ -58,39 +44,69 @@ export interface NNNutrition {
   sugar: number;
 }
 
-interface NNScrapedItem {
-  oid: number;
+interface SupabaseHall {
+  id: string;
   name: string;
-  traits?: string[];
-  nutrition?: Record<string, string>;
-  nutritionLabel?: Record<string, string>;
-  nutritionGrid?: Record<string, string>;
 }
 
-interface NNScrapedMenu {
-  oid: number;
-  name: string;
-  items?: NNScrapedItem[];
+interface SupabaseStation {
+  id?: string;
+  name?: string;
+  dining_halls?: { id?: string; name?: string } | Array<{ id?: string; name?: string }>;
 }
 
-interface NNScrapedUnit {
-  oid: number;
-  name: string;
-  source?: 'unit' | 'child-unit';
-  menus?: NNScrapedMenu[];
+interface SupabaseFoodItem {
+  id?: string;
+  name?: string;
+  calories?: number | string | null;
+  protein?: number | string | null;
+  carbs?: number | string | null;
+  fat?: number | string | null;
+  saturated_fat?: number | string | null;
+  trans_fat?: number | string | null;
+  cholesterol?: number | string | null;
+  sodium?: number | string | null;
+  fiber?: number | string | null;
+  sugar?: number | string | null;
+  serving_size?: string | null;
+  serving?: string | null;
+  station_id?: string | null;
+  allergens?: unknown;
+  stations?: SupabaseStation | SupabaseStation[] | null;
 }
-
-interface NNScrapePayload {
-  units: NNScrapedUnit[];
-  generatedAt?: string;
-  sourceUrl?: string;
-}
-
-// ── Cache helpers ─────────────────────────────────────────────────────────────
 
 interface CacheEntry<T> {
   data: T;
   ts: number;
+}
+
+interface ParsedItem {
+  oid: number;
+  id: string;
+  hallOid: number;
+  stationOid: number;
+  name: string;
+  serving: string;
+  nutrition: NNNutrition;
+}
+
+interface ParsedCourse {
+  oid: number;
+  id: string;
+  name: string;
+}
+
+interface ParsedHall {
+  oid: number;
+  id: string;
+  name: string;
+  menuOid: number;
+  courses: ParsedCourse[];
+}
+
+interface ParsedDataset {
+  halls: ParsedHall[];
+  items: ParsedItem[];
 }
 
 async function getCached<T>(key: string, ttl: number): Promise<T | null> {
@@ -109,211 +125,279 @@ async function setCached<T>(key: string, data: T): Promise<void> {
   try {
     const entry: CacheEntry<T> = { data, ts: Date.now() };
     await AsyncStorage.setItem(`${CACHE_PREFIX}${key}`, JSON.stringify(entry));
-  } catch { /* ignore */ }
-}
-
-// ── Edge Function invocation ──────────────────────────────────────────────────
-
-async function invokeDirectFetch<T>(): Promise<T> {
-  console.log('[netNutritionService.invokeDirectFetch] request', {
-    url: NETNUTRITION_FUNCTION_URL,
-  });
-  const res = await fetch(NETNUTRITION_FUNCTION_URL);
-  const data = await res.json();
-  console.log('[netNutritionService.invokeDirectFetch] response', {
-    status: res.status,
-    ok: res.ok,
-    keys: data && typeof data === 'object' ? Object.keys(data as Record<string, unknown>) : [],
-  });
-  if (!res.ok || data?.error) {
-    throw new Error(data?.error || `[${res.status}] netnutrition fetch failed`);
+  } catch {
+    // ignore cache write failures
   }
-  return data as T;
 }
 
-function normalizeScrapePayload(payload: unknown): NNScrapePayload {
-  const obj = (payload && typeof payload === 'object') ? payload as Record<string, unknown> : {};
-  const units = Array.isArray(obj.units) ? obj.units : [];
+function headers() {
   return {
-    units: units as NNScrapedUnit[],
-    generatedAt: typeof obj.generatedAt === 'string' ? obj.generatedAt : undefined,
-    sourceUrl: typeof obj.sourceUrl === 'string' ? obj.sourceUrl : undefined,
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json',
   };
 }
 
-async function loadScrapedPayload(): Promise<NNScrapePayload> {
-  const cached = await getCached<NNScrapePayload>(SCRAPE_CACHE_KEY, TTL_MENU);
-  if (cached?.units?.length) return cached;
-
-  let payload = normalizeScrapePayload(
-    await invokeDirectFetch<NNScrapePayload>(),
-  );
-
-  if (!payload?.units) payload = { units: [] };
-  console.log('[netNutritionService.loadScrapedPayload] payload ready', {
-    units: payload.units.length,
-    generatedAt: payload.generatedAt,
-  });
-  await setCached(SCRAPE_CACHE_KEY, payload);
-  return payload;
+function toNumber(value: unknown): number {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+function hashToPositiveInt(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) + 1;
+}
+
+function stationFromRow(row: SupabaseFoodItem): SupabaseStation | null {
+  if (!row.stations) return null;
+  if (Array.isArray(row.stations)) return row.stations[0] ?? null;
+  return row.stations;
+}
+
+function hallFromStation(station: SupabaseStation | null): { id: string; name: string } | null {
+  if (!station?.dining_halls) return null;
+  if (Array.isArray(station.dining_halls)) {
+    const hall = station.dining_halls[0];
+    if (!hall) return null;
+    return { id: hall.id ?? '', name: hall.name ?? '' };
+  }
+  return {
+    id: station.dining_halls.id ?? '',
+    name: station.dining_halls.name ?? '',
+  };
+}
+
+async function fetchDiningHalls(): Promise<SupabaseHall[]> {
+  const params = new URLSearchParams({ select: 'id,name', order: 'name.asc' });
+  const response = await fetch(`${REST_BASE}/dining_halls?${params.toString()}`, {
+    method: 'GET',
+    headers: headers(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch dining halls (${response.status})`);
+  }
+
+  const halls = (await response.json()) as SupabaseHall[];
+  return Array.isArray(halls) ? halls : [];
+}
+
+async function fetchFoodItems(): Promise<SupabaseFoodItem[]> {
+  const params = new URLSearchParams({
+    select:
+      'id,name,calories,protein,carbs,fat,saturated_fat,trans_fat,cholesterol,sodium,fiber,sugar,serving_size,serving,station_id,allergens,stations(id,name,dining_halls(id,name))',
+    order: 'name.asc',
+  });
+
+  const response = await fetch(`${REST_BASE}/food_items?${params.toString()}`, {
+    method: 'GET',
+    headers: headers(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch food items (${response.status})`);
+  }
+
+  const items = (await response.json()) as SupabaseFoodItem[];
+  return Array.isArray(items) ? items : [];
+}
+
+function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDataset {
+  const hallById = new Map<string, ParsedHall>();
+
+  for (const hall of halls) {
+    const hallId = String(hall.id ?? '').trim();
+    const hallName = String(hall.name ?? '').trim();
+    if (!hallId || !hallName) continue;
+    const hallOid = hashToPositiveInt(`hall:${hallId}`);
+    hallById.set(hallId, {
+      oid: hallOid,
+      id: hallId,
+      name: hallName,
+      menuOid: hashToPositiveInt(`menu:${hallId}:all`),
+      courses: [],
+    });
+  }
+
+  const courseNamesByHall = new Map<number, Map<string, ParsedCourse>>();
+  const parsedItems: ParsedItem[] = [];
+
+  for (const row of rows) {
+    const itemId = String(row.id ?? '').trim();
+    const itemName = String(row.name ?? '').trim();
+    if (!itemId || !itemName) continue;
+
+    const station = stationFromRow(row);
+    const stationId = String(station?.id ?? row.station_id ?? 'unassigned').trim() || 'unassigned';
+    const stationName = String(station?.name ?? 'General').trim() || 'General';
+
+    const stationHall = hallFromStation(station);
+    const hallId = String(stationHall?.id ?? '').trim();
+    const hallName = String(stationHall?.name ?? '').trim();
+
+    let hall = hallId ? hallById.get(hallId) : undefined;
+    if (!hall) {
+      const fallbackId = hallId || `derived:${hallName || 'Unknown Hall'}`;
+      hall = {
+        oid: hashToPositiveInt(`hall:${fallbackId}`),
+        id: fallbackId,
+        name: hallName || 'Unknown Hall',
+        menuOid: hashToPositiveInt(`menu:${fallbackId}:all`),
+        courses: [],
+      };
+      hallById.set(fallbackId, hall);
+    }
+
+    let hallCourses = courseNamesByHall.get(hall.oid);
+    if (!hallCourses) {
+      hallCourses = new Map();
+      courseNamesByHall.set(hall.oid, hallCourses);
+    }
+
+    let course = hallCourses.get(stationId);
+    if (!course) {
+      course = {
+        oid: hashToPositiveInt(`station:${hall.id}:${stationId}`),
+        id: stationId,
+        name: stationName,
+      };
+      hallCourses.set(stationId, course);
+      hall.courses.push(course);
+    }
+
+    parsedItems.push({
+      oid: hashToPositiveInt(`item:${itemId}`),
+      id: itemId,
+      hallOid: hall.oid,
+      stationOid: course.oid,
+      name: itemName,
+      serving: String(row.serving_size ?? row.serving ?? '1 serving'),
+      nutrition: {
+        servingSize: String(row.serving_size ?? row.serving ?? '1 serving'),
+        calories: toNumber(row.calories),
+        protein: toNumber(row.protein),
+        carbs: toNumber(row.carbs),
+        fat: toNumber(row.fat),
+        saturatedFat: toNumber(row.saturated_fat),
+        transFat: toNumber(row.trans_fat),
+        cholesterol: toNumber(row.cholesterol),
+        sodium: toNumber(row.sodium),
+        fiber: toNumber(row.fiber),
+        sugar: toNumber(row.sugar),
+      },
+    });
+  }
+
+  return {
+    halls: Array.from(hallById.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    items: parsedItems,
+  };
+}
+
+async function getDataset(forceRefresh = false): Promise<ParsedDataset> {
+  if (!forceRefresh) {
+    const cached = await getCached<ParsedDataset>('dataset', TTL_MENU);
+    if (cached) return cached;
+  }
+
+  const [halls, items] = await Promise.all([fetchDiningHalls(), fetchFoodItems()]);
+  const dataset = buildDataset(halls, items);
+  await setCached('dataset', dataset);
+  return dataset;
+}
 
 export const netNutritionService = {
-  /** Fetch all active dining locations from BSU NetNutrition */
+  async refreshDataFromEdge(): Promise<void> {
+    const response = await fetch(SCRAPE_FUNCTION_URL, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Supabase scrape refresh failed (${response.status}): ${text.slice(0, 200)}`);
+    }
+  },
+
   async getLocations(): Promise<NNLocation[]> {
-    const cached = await getCached<NNLocation[]>('units', TTL_MENU);
-    if (cached && cached.length > 0) {
-      console.log('[netNutritionService.getLocations] cache hit', { count: cached.length });
-      return cached;
-    }
-
-    const result = await loadScrapedPayload();
-    const units = (result.units ?? []).map((unit) => ({ oid: unit.oid, name: unit.name }));
-    console.log('[netNutritionService.getLocations] fetched', { count: units.length });
-    if (units.length) await setCached('units', units);
-    return units;
+    const data = await getDataset();
+    return data.halls.map((hall) => ({ oid: hall.oid, name: hall.name }));
   },
 
-  /** Fetch menu periods (Breakfast, Lunch, Dinner…) for a dining location */
   async getMenus(unitOid: number): Promise<NNMenu[]> {
-    const key = `menus_${unitOid}`;
-    const cached = await getCached<NNMenu[]>(key, TTL_MENU);
-    if (cached?.length) {
-      console.log('[netNutritionService.getMenus] cache hit', { unitOid, count: cached.length });
-      return cached;
-    }
-
-    const result = await loadScrapedPayload();
-    const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
-    const menus = (unit?.menus ?? []).map((menu) => ({ oid: menu.oid, name: menu.name }));
-    console.log('[netNutritionService.getMenus] fetched', { unitOid, count: menus.length });
-    if (menus.length) await setCached(key, menus);
-    return menus;
+    const data = await getDataset();
+    const hall = data.halls.find((entry) => entry.oid === unitOid);
+    if (!hall) return [];
+    return [{ oid: hall.menuOid, name: 'All Items' }];
   },
 
-  /** Fetch courses/stations within a menu period */
   async getCourses(unitOid: number, menuOid: number): Promise<NNCourse[]> {
-    const key = `courses_${unitOid}_${menuOid}`;
-    const cached = await getCached<NNCourse[]>(key, TTL_MENU);
-    if (cached?.length) {
-      console.log('[netNutritionService.getCourses] cache hit', {
-        unitOid,
-        menuOid,
-        count: cached.length,
-      });
-      return cached;
-    }
-
-    const result = await loadScrapedPayload();
-    const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
-    const menu = (unit?.menus ?? []).find((entry) => entry.oid === menuOid);
-    const traits = new Map<string, string>();
-    for (const item of menu?.items ?? []) {
-      for (const trait of item.traits ?? []) traits.set(trait, trait);
-    }
-    const courses = Array.from(traits.entries()).map(([name], index) => ({
-      oid: index + 1,
-      name,
-    }));
-    console.log('[netNutritionService.getCourses] fetched', { unitOid, menuOid, count: courses.length });
-    if (courses.length) await setCached(key, courses);
-    return courses;
+    const data = await getDataset();
+    const hall = data.halls.find((entry) => entry.oid === unitOid && entry.menuOid === menuOid);
+    if (!hall) return [];
+    return hall.courses.map((course) => ({ oid: course.oid, name: course.name }));
   },
 
-  /** Fetch menu items for a course (or the whole menu if courseOid omitted) */
-  async getItems(
-    unitOid: number,
-    menuOid: number,
-    courseOid?: number,
-  ): Promise<NNItem[]> {
-    const key = `items_${unitOid}_${menuOid}_${courseOid ?? 'all'}`;
-    const cached = await getCached<NNItem[]>(key, TTL_MENU);
-    if (cached?.length) {
-      console.log('[netNutritionService.getItems] cache hit', {
-        unitOid,
-        menuOid,
-        courseOid: courseOid ?? null,
-        count: cached.length,
-      });
-      return cached;
-    }
+  async getItems(unitOid: number, menuOid: number, courseOid?: number): Promise<NNItem[]> {
+    const data = await getDataset();
+    const hall = data.halls.find((entry) => entry.oid === unitOid && entry.menuOid === menuOid);
+    if (!hall) return [];
 
-    const result = await loadScrapedPayload();
-    const unit = (result.units ?? []).find((entry) => entry.oid === unitOid);
-    const menu = (unit?.menus ?? []).find((entry) => entry.oid === menuOid);
-    const items = (menu?.items ?? [])
-      .filter((item) => {
-        if (!courseOid) return true;
-        const traits = item.traits ?? [];
-        return traits.some((trait, traitIndex) => traitIndex + 1 === courseOid);
-      })
+    return data.items
+      .filter((item) => item.hallOid === unitOid)
+      .filter((item) => (courseOid ? item.stationOid === courseOid : true))
       .map((item) => ({
         oid: item.oid,
         name: item.name,
-        serving: item.nutrition?.['Serving Size'] ?? item.nutritionLabel?.['Serving Size'] ?? '1 serving',
-        calories: Number(item.nutrition?.Calories ?? item.nutritionLabel?.Calories ?? 0),
+        serving: item.serving,
+        calories: item.nutrition.calories,
       }));
-    console.log('[netNutritionService.getItems] fetched', {
-      unitOid,
-      menuOid,
-      courseOid: courseOid ?? null,
-      count: items.length,
-    });
-    if (items.length) await setCached(key, items);
-    return items;
   },
 
-  /** Fetch full nutrition details for a specific menu item */
-  async getNutrition(itemOid: number, menuOid?: number): Promise<NNNutrition> {
-    const key = `nutr_${itemOid}`;
-    const cached = await getCached<NNNutrition>(key, TTL_NUTRITION);
-    if (cached) {
-      console.log('[netNutritionService.getNutrition] cache hit', { itemOid, menuOid: menuOid ?? null });
-      return cached;
+  async getNutrition(itemOid: number): Promise<NNNutrition> {
+    const cached = await getCached<NNNutrition>(`nutr_${itemOid}`, TTL_NUTRITION);
+    if (cached) return cached;
+
+    const data = await getDataset();
+    const item = data.items.find((entry) => entry.oid === itemOid);
+    if (!item) {
+      return {
+        servingSize: '1 serving',
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        saturatedFat: 0,
+        transFat: 0,
+        cholesterol: 0,
+        sodium: 0,
+        fiber: 0,
+        sugar: 0,
+      };
     }
 
-    const result = await loadScrapedPayload();
-    const allItems = (result.units ?? [])
-      .flatMap((unit) => unit.menus ?? [])
-      .flatMap((menu) => menu.items ?? []);
-    const item = allItems.find((entry) => entry.oid === itemOid);
-    const label = item?.nutrition ?? item?.nutritionLabel ?? {};
-    const nutrition: Partial<NNNutrition> = {
-      servingSize: label['Serving Size'] ?? '1 serving',
-      calories: Number(label['Calories'] ?? 0),
-      fat: Number(label['Total Fat'] ?? 0),
-      saturatedFat: Number(label['Saturated Fat'] ?? 0),
-      transFat: Number(label['Trans Fat'] ?? 0),
-      cholesterol: Number(label['Cholesterol'] ?? 0),
-      sodium: Number(label['Sodium'] ?? 0),
-      carbs: Number(label['Total Carbohydrate'] ?? 0),
-      fiber: Number(label['Dietary Fiber'] ?? 0),
-      sugar: Number(label['Total Sugars'] ?? 0),
-      protein: Number(label['Protein'] ?? 0),
-    };
-    console.log('[netNutritionService.getNutrition] fetched', {
-      itemOid,
-      menuOid: menuOid ?? null,
-      keys: Object.keys(nutrition),
-    });
-    await setCached(key, nutrition);
-    return nutrition as NNNutrition;
+    await setCached(`nutr_${itemOid}`, item.nutrition);
+    return item.nutrition;
   },
 
-  /** Clear all cached data (call on pull-to-refresh) */
   async clearCache(): Promise<void> {
     try {
       const keys = await AsyncStorage.getAllKeys();
       const toRemove = keys.filter((k) => k.startsWith(CACHE_PREFIX));
-      console.log('[netNutritionService.clearCache] clearing keys', { count: toRemove.length });
       if (toRemove.length) await AsyncStorage.multiRemove(toRemove);
-    } catch { /* ignore */ }
+    } catch {
+      // ignore cache clear failures
+    }
   },
 };
-
-// ── Location metadata (icon, description, hours) keyed by name fragment ───────
 
 interface LocationMeta {
   icon: string;

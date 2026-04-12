@@ -33,18 +33,6 @@ export default function LocationsScreen() {
 
   const { locations, loading, error, refresh } = useLocations();
   const [refreshing, setRefreshing] = useState(false);
-  const debugSource = locations.some(location => location.oid < 0) ? 'mock-fallback' : 'netnutrition';
-
-  // TEMP DEBUG: log location payload on the tabs index screen while validating live data.
-  React.useEffect(() => {
-    if (!loading) {
-      console.log('[TEMP DEBUG] Dining locations:', {
-        source: debugSource,
-        locations,
-      });
-    }
-  }, [loading, locations, debugSource]);
-
   const searchResults = searchQuery.trim() ? searchService.searchMeals(searchQuery) : [];
   const showingSearch = searchQuery.trim().length > 0;
 
@@ -116,7 +104,7 @@ export default function LocationsScreen() {
           <View style={styles.headerTitles}>
             <Text style={[styles.title, { color: colors.text }]}>Dining Locations</Text>
             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-              Live from BSU NetNutrition
+              Powered by Supabase dining data
             </Text>
           </View>
           <Pressable onPress={() => router.push('/custom-meal')} style={styles.addButton} hitSlop={8}>
@@ -215,12 +203,6 @@ export default function LocationsScreen() {
                 </Text>
               )}
             </View>
-            {!loading && (
-              <Text style={[styles.debugText, { color: colors.textLight }]}>
-                TEMP DEBUG [{debugSource}]: {locations.map(location => `${location.name} (oid:${location.oid})`).join(' • ')}
-              </Text>
-            )}
-
             {loading ? (
               <View style={styles.loadingState}>
                 <ActivityIndicator size="large" color={colors.primary} />
@@ -253,7 +235,7 @@ export default function LocationsScreen() {
                 <View style={[styles.liveIndicator, { backgroundColor: colors.success + '12', borderColor: colors.success + '30' }]}>
                   <View style={[styles.liveDot, { backgroundColor: colors.success }]} />
                   <Text style={[styles.liveText, { color: colors.success }]}>
-                    Live data from BSU NetNutrition
+                    Live data from Supabase
                   </Text>
                 </View>
                 {locations.map(renderLocationCard)}
@@ -307,10 +289,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.sm,
-  },
-  debugText: {
-    ...typography.caption,
-    marginBottom: spacing.md,
   },
   sectionTitle: { ...typography.h3, marginBottom: spacing.sm },
   sectionCount: { ...typography.bodySmall },
