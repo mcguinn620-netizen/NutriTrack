@@ -25,8 +25,8 @@ import { useAlert } from '@/template';
 
 export default function LocationDetailScreen() {
   const { id, name: encodedName } = useLocalSearchParams<{
-    id: string;
-    name: string;
+    id?: string | string[];
+    name?: string | string[];
   }>();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -35,8 +35,17 @@ export default function LocationDetailScreen() {
   const today = new Date().toISOString().split('T')[0];
   const { addMeal } = useDailyLog(today);
 
-  const unitOid = parseInt(id ?? '0');
-  const locationName = decodeURIComponent(encodedName ?? 'Dining Location');
+  const routeId = Array.isArray(id) ? id[0] : id;
+  const routeName = Array.isArray(encodedName) ? encodedName[0] : encodedName;
+  const unitOid = Number.parseInt(routeId ?? '0', 10);
+  const locationName = (() => {
+    if (!routeName) return 'Dining Location';
+    try {
+      return decodeURIComponent(routeName);
+    } catch {
+      return routeName;
+    }
+  })();
   const isStatic = unitOid < 0;
 
   // ── Static fallback ──────────────────────────────────────────────────────────
