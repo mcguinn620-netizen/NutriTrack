@@ -6,7 +6,7 @@ const TTL_NUTRITION = 24 * 60 * 60 * 1000;
 const SUPABASE_URL = 'https://drtuuuqtgihqvzcripec.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydHV1dXF0Z2locXZ6Y3JpcGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NjAzNjksImV4cCI6MjA5MTQzNjM2OX0.ls4fI6gvxbEtiFxJhtzzYfFG6tf95Av4V5Z1flYNk-k';
 const REST_BASE = `${SUPABASE_URL}/rest/v1`;
-const SCRAPE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/netnutrition-scrape`;
+const SCRAPE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/menu`;
 
 export interface NNLocation {
   oid: number;
@@ -49,10 +49,19 @@ interface SupabaseHall {
   name: string;
 }
 
-interface SupabaseStation {
+interface SupabaseCategory {
   id?: string;
   name?: string;
+  hall_id?: string;
   dining_halls?: { id?: string; name?: string } | Array<{ id?: string; name?: string }>;
+}
+
+interface SupabaseNutritionFact {
+  item_id?: string;
+  calories?: number | string | null;
+  protein?: number | string | null;
+  carbs?: number | string | null;
+  fat?: number | string | null;
 }
 
 interface SupabaseFoodItem {
@@ -70,9 +79,8 @@ interface SupabaseFoodItem {
   sugar?: number | string | null;
   serving_size?: string | null;
   serving?: string | null;
-  station_id?: string | null;
-  allergens?: unknown;
-  stations?: SupabaseStation | SupabaseStation[] | null;
+  menu_categories?: SupabaseCategory | SupabaseCategory[] | null;
+  nutrition_facts?: SupabaseNutritionFact | SupabaseNutritionFact[] | null;
 }
 
 interface CacheEntry<T> {
@@ -155,23 +163,29 @@ function hashToPositiveInt(seed: string): number {
   return Math.abs(hash) + 1;
 }
 
-function stationFromRow(row: SupabaseFoodItem): SupabaseStation | null {
-  if (!row.stations) return null;
-  if (Array.isArray(row.stations)) return row.stations[0] ?? null;
-  return row.stations;
+function categoryFromRow(row: SupabaseFoodItem): SupabaseCategory | null {
+  if (!row.menu_categories) return null;
+  if (Array.isArray(row.menu_categories)) return row.menu_categories[0] ?? null;
+  return row.menu_categories;
 }
 
-function hallFromStation(station: SupabaseStation | null): { id: string; name: string } | null {
-  if (!station?.dining_halls) return null;
-  if (Array.isArray(station.dining_halls)) {
-    const hall = station.dining_halls[0];
+function hallFromCategory(category: SupabaseCategory | null): { id: string; name: string } | null {
+  if (!category?.dining_halls) return null;
+  if (Array.isArray(category.dining_halls)) {
+    const hall = category.dining_halls[0];
     if (!hall) return null;
     return { id: hall.id ?? '', name: hall.name ?? '' };
   }
   return {
-    id: station.dining_halls.id ?? '',
-    name: station.dining_halls.name ?? '',
+    id: category.dining_halls.id ?? '',
+    name: category.dining_halls.name ?? '',
   };
+}
+
+function nutritionFromRow(row: SupabaseFoodItem): SupabaseNutritionFact | null {
+  if (!row.nutrition_facts) return null;
+  if (Array.isArray(row.nutrition_facts)) return row.nutrition_facts[0] ?? null;
+  return row.nutrition_facts;
 }
 
 async function fetchDiningHalls(): Promise<SupabaseHall[]> {
@@ -192,7 +206,7 @@ async function fetchDiningHalls(): Promise<SupabaseHall[]> {
 async function fetchFoodItems(): Promise<SupabaseFoodItem[]> {
   const params = new URLSearchParams({
     select:
-      'id,name,calories,protein,carbs,fat,saturated_fat,trans_fat,cholesterol,sodium,fiber,sugar,serving_size,serving,station_id,allergens,stations(id,name,dining_halls(id,name))',
+      'id,name,serving_size,serving,category_id,menu_categories(id,name,hall_id,dining_halls(id,name)),nutrition_facts(item_id,calories,protein,carbs,fat)',
     order: 'name.asc',
   });
 
@@ -234,13 +248,13 @@ function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDa
     const itemName = String(row.name ?? '').trim();
     if (!itemId || !itemName) continue;
 
-    const station = stationFromRow(row);
-    const stationId = String(station?.id ?? row.station_id ?? 'unassigned').trim() || 'unassigned';
-    const stationName = String(station?.name ?? 'General').trim() || 'General';
+    const category = categoryFromRow(row);
+    const categoryId = String(category?.id ?? row.category_id ?? 'all-items').trim() || 'all-items';
+    const categoryName = String(category?.name ?? 'All Items').trim() || 'All Items';
 
-    const stationHall = hallFromStation(station);
-    const hallId = String(stationHall?.id ?? '').trim();
-    const hallName = String(stationHall?.name ?? '').trim();
+    const categoryHall = hallFromCategory(category);
+    const hallId = String(categoryHall?.id ?? '').trim();
+    const hallName = String(categoryHall?.name ?? '').trim();
 
     let hall = hallId ? hallById.get(hallId) : undefined;
     if (!hall) {
@@ -261,16 +275,18 @@ function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDa
       courseNamesByHall.set(hall.oid, hallCourses);
     }
 
-    let course = hallCourses.get(stationId);
+    let course = hallCourses.get(categoryId);
     if (!course) {
       course = {
-        oid: hashToPositiveInt(`station:${hall.id}:${stationId}`),
-        id: stationId,
-        name: stationName,
+        oid: hashToPositiveInt(`category:${hall.id}:${categoryId}`),
+        id: categoryId,
+        name: categoryName,
       };
-      hallCourses.set(stationId, course);
+      hallCourses.set(categoryId, course);
       hall.courses.push(course);
     }
+
+    const nutrition = nutritionFromRow(row);
 
     parsedItems.push({
       oid: hashToPositiveInt(`item:${itemId}`),
@@ -281,10 +297,10 @@ function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDa
       serving: String(row.serving_size ?? row.serving ?? '1 serving'),
       nutrition: {
         servingSize: String(row.serving_size ?? row.serving ?? '1 serving'),
-        calories: toNumber(row.calories),
-        protein: toNumber(row.protein),
-        carbs: toNumber(row.carbs),
-        fat: toNumber(row.fat),
+        calories: toNumber(nutrition?.calories),
+        protein: toNumber(nutrition?.protein),
+        carbs: toNumber(nutrition?.carbs),
+        fat: toNumber(nutrition?.fat),
         saturatedFat: toNumber(row.saturated_fat),
         transFat: toNumber(row.trans_fat),
         cholesterol: toNumber(row.cholesterol),
@@ -316,9 +332,8 @@ async function getDataset(forceRefresh = false): Promise<ParsedDataset> {
 export const netNutritionService = {
   async refreshDataFromEdge(): Promise<void> {
     const response = await fetch(SCRAPE_FUNCTION_URL, {
-      method: 'POST',
+      method: 'GET',
       headers: headers(),
-      body: JSON.stringify({}),
     });
 
     if (!response.ok) {
