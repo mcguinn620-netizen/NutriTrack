@@ -118,13 +118,6 @@ export default function LocationDetailScreen() {
     setSelectedCourse(null);
   }, [selectedMenu?.oid]);
 
-  // Auto-select first course once loaded
-  useEffect(() => {
-    if (liveCourses.length > 0 && !selectedCourse) {
-      setSelectedCourse(liveCourses[0]);
-    }
-  }, [liveCourses, selectedCourse]);
-
   // ── Nutrition modal ──────────────────────────────────────────────────────────
   const [modalVisible, setModalVisible] = useState(false);
   const [previewMeal, setPreviewMeal] = useState<Meal | null>(null);
@@ -363,7 +356,7 @@ export default function LocationDetailScreen() {
         </View>
       ) : null}
 
-      {/* ── Course sub-tabs (Entrees / Sides / Grill) ── */}
+      {/* ── Station filter chips ── */}
       {!isStatic && liveCourses.length > 0 ? (
         <View
           style={[
@@ -376,12 +369,14 @@ export default function LocationDetailScreen() {
         >
           <FlatList
             horizontal
-            data={liveCourses}
+            data={[{ oid: 0, name: 'All Stations' }, ...liveCourses]}
             keyExtractor={(c) => String(c.oid)}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.courseContent}
             renderItem={({ item: course }) => {
-              const active = selectedCourse?.oid === course.oid;
+              const active =
+                (course.oid === 0 && !selectedCourse) ||
+                selectedCourse?.oid === course.oid;
               return (
                 <Pressable
                   style={[
@@ -395,7 +390,9 @@ export default function LocationDetailScreen() {
                         : colors.borderLight,
                     },
                   ]}
-                  onPress={() => setSelectedCourse(course)}
+                  onPress={() =>
+                    setSelectedCourse(course.oid === 0 ? null : course)
+                  }
                 >
                   <Text
                     style={[
@@ -428,7 +425,7 @@ export default function LocationDetailScreen() {
         >
           <ActivityIndicator size="small" color={colors.primary} />
           <Text style={[styles.loadingTabsText, { color: colors.textSecondary }]}>
-            Loading stations…
+            Loading stations...
           </Text>
         </View>
       ) : null}
