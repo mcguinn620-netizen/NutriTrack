@@ -34,7 +34,10 @@ export function useLocations() {
     setLoading(true);
     setError(null);
     try {
-      if (forceRefresh) await netNutritionService.clearCache();
+      if (forceRefresh) {
+        await netNutritionService.refreshDataFromEdge();
+        await netNutritionService.clearCache();
+      }
       const data = await netNutritionService.getLocations();
       console.log('[useLocations] load success', { count: data.length });
       if (data.length > 0) {
