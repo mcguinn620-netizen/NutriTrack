@@ -185,7 +185,7 @@ export function useNutrition() {
       setNutrition(null);
       try {
         console.log('[useNutrition] load start', { itemOid, menuOid: menuOid ?? null });
-        const data = await netNutritionService.getNutrition(itemOid, menuOid);
+        const data = await netNutritionService.getNutrition(itemOid);
         console.log('[useNutrition] load success', {
           itemOid,
           menuOid: menuOid ?? null,
