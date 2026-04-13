@@ -13,8 +13,6 @@ import {
   NNCourse,
   NNItem,
   NNNutrition,
-  getFoodItems,
-  triggerScrape,
 } from '@/services/netNutritionService';
 import { diningLocations } from '@/services/mockData';
 
@@ -37,18 +35,9 @@ export function useLocations() {
     setError(null);
     try {
       if (forceRefresh) {
-        await triggerScrape();
+        await netNutritionService.refreshDataFromEdge();
         await netNutritionService.clearCache();
       }
-      if (!forceRefresh) {
-        try {
-          await triggerScrape();
-        } catch (e) {
-          console.log('Scrape failed, using existing data');
-        }
-      }
-      const items = await getFoodItems();
-      console.log('Loaded items:', items);
       const data = await netNutritionService.getLocations();
       console.log('[useLocations] load success', { count: data.length });
       if (data.length > 0) {

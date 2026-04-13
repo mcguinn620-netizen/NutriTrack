@@ -64,7 +64,7 @@ supabase functions deploy netnutrition --no-verify-jwt
 ```bash
 curl -sS -D /tmp/nn_headers.txt \
   -o /tmp/nn_body.json \
-  "https://drtuuuqtgihqvzcripec.supabase.co/functions/v1/netnutrition-scrape" \
+  "https://upjotaeatvessmbrorgx.supabase.co/functions/v1/netnutrition" \
   -H "Content-Type: application/json" \
   -H "apikey: sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di" \
   -H "Authorization: Bearer sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di"

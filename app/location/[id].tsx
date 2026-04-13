@@ -25,8 +25,8 @@ import { useAlert } from '@/template';
 
 export default function LocationDetailScreen() {
   const { id, name: encodedName } = useLocalSearchParams<{
-    id?: string | string[];
-    name?: string | string[];
+    id: string;
+    name: string;
   }>();
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
@@ -35,17 +35,8 @@ export default function LocationDetailScreen() {
   const today = new Date().toISOString().split('T')[0];
   const { addMeal } = useDailyLog(today);
 
-  const routeId = Array.isArray(id) ? id[0] : id;
-  const routeName = Array.isArray(encodedName) ? encodedName[0] : encodedName;
-  const unitOid = Number.parseInt(routeId ?? '0', 10);
-  const locationName = (() => {
-    if (!routeName) return 'Dining Location';
-    try {
-      return decodeURIComponent(routeName);
-    } catch {
-      return routeName;
-    }
-  })();
+  const unitOid = parseInt(id ?? '0');
+  const locationName = decodeURIComponent(encodedName ?? 'Dining Location');
   const isStatic = unitOid < 0;
 
   // ── Static fallback ──────────────────────────────────────────────────────────
@@ -117,6 +108,13 @@ export default function LocationDetailScreen() {
   useEffect(() => {
     setSelectedCourse(null);
   }, [selectedMenu?.oid]);
+
+  // Auto-select first course once loaded
+  useEffect(() => {
+    if (liveCourses.length > 0 && !selectedCourse) {
+      setSelectedCourse(liveCourses[0]);
+    }
+  }, [liveCourses, selectedCourse]);
 
   // ── Nutrition modal ──────────────────────────────────────────────────────────
   const [modalVisible, setModalVisible] = useState(false);
@@ -356,7 +354,7 @@ export default function LocationDetailScreen() {
         </View>
       ) : null}
 
-      {/* ── Station filter chips ── */}
+      {/* ── Course sub-tabs (Entrees / Sides / Grill) ── */}
       {!isStatic && liveCourses.length > 0 ? (
         <View
           style={[
@@ -369,14 +367,12 @@ export default function LocationDetailScreen() {
         >
           <FlatList
             horizontal
-            data={[{ oid: 0, name: 'All Stations' }, ...liveCourses]}
+            data={liveCourses}
             keyExtractor={(c) => String(c.oid)}
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.courseContent}
             renderItem={({ item: course }) => {
-              const active =
-                (course.oid === 0 && !selectedCourse) ||
-                selectedCourse?.oid === course.oid;
+              const active = selectedCourse?.oid === course.oid;
               return (
                 <Pressable
                   style={[
@@ -390,9 +386,7 @@ export default function LocationDetailScreen() {
                         : colors.borderLight,
                     },
                   ]}
-                  onPress={() =>
-                    setSelectedCourse(course.oid === 0 ? null : course)
-                  }
+                  onPress={() => setSelectedCourse(course)}
                 >
                   <Text
                     style={[
@@ -425,7 +419,7 @@ export default function LocationDetailScreen() {
         >
           <ActivityIndicator size="small" color={colors.primary} />
           <Text style={[styles.loadingTabsText, { color: colors.textSecondary }]}>
-            Loading stations...
+            Loading stations…
           </Text>
         </View>
       ) : null}
