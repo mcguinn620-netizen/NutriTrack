@@ -7,12 +7,12 @@ const TTL_NUTRITION = 24 * 60 * 60 * 1000;
 export const SUPABASE_URL = 'https://drtuuuqtgihqvzcripec.supabase.co';
 export const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydHV1dXF0Z2locXZ6Y3JpcGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NjAzNjksImV4cCI6MjA5MTQzNjM2OX0.ls4fI6gvxbEtiFxJhtzzYfFG6tf95Av4V5Z1flYNk-k';
 
-export const supabase = createClient(
-  SUPABASE_URL,
-  SUPABASE_ANON_KEY,
-);
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+  },
+});
 
-const REST_BASE = `${SUPABASE_URL}/rest/v1`;
 const FUNCTION_URL = 'https://drtuuuqtgihqvzcripec.supabase.co/functions/v1/netnutrition-scrape';
 
 export interface NNLocation {
@@ -137,13 +137,6 @@ async function setCached<T>(key: string, data: T): Promise<void> {
   }
 }
 
-function headers() {
-  return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    'Content-Type': 'application/json',
-  };
-}
 
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -182,20 +175,20 @@ function hallFromStation(station: SupabaseStation | null): { id: string; name: s
 }
 
 async function fetchDiningHalls(): Promise<SupabaseHall[]> {
-  const params = new URLSearchParams({ select: 'id,name', order: 'name.asc' });
-  const response = await fetch(`${REST_BASE}/dining_halls?${params.toString()}`, {
-    method: 'GET',
-    headers: headers(),
-  });
+  const { data, error } = await supabase
+    .from('dining_halls')
+    .select('*')
+    .order('name', { ascending: true });
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch dining halls (${response.status})`);
+  if (error) {
+    console.error('[Supabase dining_halls fetch failed]', {
+      message: error.message,
+      code: error.code,
+    });
+    throw error;
   }
 
-  const halls = (await response.json()) as SupabaseHall[];
-  console.log('Supabase data:', halls);
-  console.log('Supabase error:', null);
-  return Array.isArray(halls) ? halls : [];
+  return Array.isArray(data) ? (data as SupabaseHall[]) : [];
 }
 
 export async function getFoodItems() {
