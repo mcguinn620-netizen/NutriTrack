@@ -73,11 +73,11 @@ export default function LocationsScreen() {
     await addMeal(meal);
   };
 
-  const renderLocationCard = (loc: NNLocation) => {
-    const meta = getLocationMeta(loc.name);
+  const renderLocationCard = (item: NNLocation) => {
+    const meta = getLocationMeta(item.name);
     return (
       <Pressable
-        key={loc.oid}
+        key={item.oid}
         style={({ pressed }) => [
           styles.locationCard,
           {
@@ -86,11 +86,11 @@ export default function LocationsScreen() {
           },
         ]}
         onPress={() => {
-            if (loc.oid < 0) {
+            if (item.oid < 0) {
               // Fallback static location — link to mock detail via name only
-              router.push(`/location/${loc.oid}?name=${encodeURIComponent(loc.name)}&static=1`);
+              router.push(`/location/${item.oid}?name=${encodeURIComponent(item.name)}&static=1`);
             } else {
-              router.push(`/location/${loc.oid}?name=${encodeURIComponent(loc.name)}`);
+              router.push(`/location/${item.oid}?name=${encodeURIComponent(item.name)}`);
             }
           }}
       >
@@ -100,7 +100,7 @@ export default function LocationsScreen() {
           </View>
           <View style={styles.cardMeta}>
             <Text style={[styles.locationName, { color: colors.text }]} numberOfLines={1}>
-              {loc.name}
+              {item.name}
             </Text>
             <Text style={[styles.locationDesc, { color: colors.textSecondary }]} numberOfLines={2}>
               {meta.description}
