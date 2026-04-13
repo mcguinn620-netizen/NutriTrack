@@ -4,8 +4,9 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 
+// 1. This is the inner component that USES the theme
 function AppContent() {
-  const { isDark } = useTheme();
+  const { isDark } = useTheme(); // This only works if ThemeProvider is ABOVE this in the tree
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -31,14 +32,15 @@ function AppContent() {
   );
 }
 
+// 2. This is the actual DEFAULT EXPORT that Expo Router looks for
 export default function RootLayout() {
   return (
-    <AlertProvider>
+    <ThemeProvider> 
       <SafeAreaProvider>
-        <ThemeProvider>
-          <AppContent />
-        </ThemeProvider>
+        <AlertProvider>
+          <AppContent /> 
+        </AlertProvider>
       </SafeAreaProvider>
-    </AlertProvider>
+    </ThemeProvider>
   );
 }
