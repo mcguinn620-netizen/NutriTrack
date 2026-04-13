@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, Pressable,
   RefreshControl, ActivityIndicator,
@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLocations } from '@/hooks/useNetNutrition';
-import { getFoodItems, getLocationMeta, NNLocation, triggerScrape } from '@/services/netNutritionService';
+import { getLocationMeta, NNLocation } from '@/services/netNutritionService';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
 import { useCustomMeals } from '@/hooks/useCustomMeals';
@@ -32,31 +32,9 @@ export default function LocationsScreen() {
   const { addMeal } = useDailyLog(today);
 
   const { locations, loading, error, refresh } = useLocations();
-
-  const [items, setItems] = useState<any[]>([]);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        await triggerScrape();
-      } catch (e) {
-        console.log('Scrape failed, using existing data');
-      }
-
-      const data = await getFoodItems();
-      console.log('Loaded items:', data);
-      setItems(data ?? []);
-    }
-
-    load();
-  }, []);
   const [refreshing, setRefreshing] = useState(false);
   const searchResults = searchQuery.trim() ? searchService.searchMeals(searchQuery) : [];
   const showingSearch = searchQuery.trim().length > 0;
-
-  useEffect(() => {
-    console.log('Supabase items count:', items.length);
-  }, [items]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -73,11 +51,11 @@ export default function LocationsScreen() {
     await addMeal(meal);
   };
 
-  const renderLocationCard = (item: NNLocation) => {
-    const meta = getLocationMeta(item.name);
+  const renderLocationCard = (loc: NNLocation) => {
+    const meta = getLocationMeta(loc.name);
     return (
       <Pressable
-        key={item.oid}
+        key={loc.oid}
         style={({ pressed }) => [
           styles.locationCard,
           {
@@ -86,11 +64,11 @@ export default function LocationsScreen() {
           },
         ]}
         onPress={() => {
-            if (item.oid < 0) {
+            if (loc.oid < 0) {
               // Fallback static location — link to mock detail via name only
-              router.push(`/location/${item.oid}?name=${encodeURIComponent(item.name)}&static=1`);
+              router.push(`/location/${loc.oid}?name=${encodeURIComponent(loc.name)}&static=1`);
             } else {
-              router.push(`/location/${item.oid}?name=${encodeURIComponent(item.name)}`);
+              router.push(`/location/${loc.oid}?name=${encodeURIComponent(loc.name)}`);
             }
           }}
       >
@@ -100,7 +78,7 @@ export default function LocationsScreen() {
           </View>
           <View style={styles.cardMeta}>
             <Text style={[styles.locationName, { color: colors.text }]} numberOfLines={1}>
-              {item.name}
+              {loc.name}
             </Text>
             <Text style={[styles.locationDesc, { color: colors.textSecondary }]} numberOfLines={2}>
               {meta.description}

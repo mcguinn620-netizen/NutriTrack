@@ -48,11 +48,7 @@ export function useLocations() {
         setError('Live data unavailable — showing cached locations');
       }
     } catch (e) {
-      const supabaseError = e as { message?: string; code?: string };
-      console.error('[NetNutrition] Failed to load live locations:', {
-        message: supabaseError?.message,
-        code: supabaseError?.code,
-      });
+      console.error('[NetNutrition] Failed to load live locations:', e);
       setLocations(FALLBACK_LOCATIONS);
       const detail = e instanceof Error ? ` (${e.message})` : '';
       setError(`Could not reach BSU NetNutrition${detail} — showing cached locations`);
