@@ -3,6 +3,7 @@ import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 import { useTheme } from '@/contexts/ThemeContext';
+// browser tab removed — file excluded via Tabs.Screen omission and hidden below
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -75,15 +76,8 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="browser"
-        options={{
-          title: 'Browser',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="language" size={size} color={color} />
-          ),
-        }}
-      />
+      {/* Hide orphaned browser route files from tab bar */}
+      <Tabs.Screen name="browser" options={{ href: null }} />
     </Tabs>
   );
 }
