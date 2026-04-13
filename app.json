@@ -8,6 +8,9 @@
     "scheme": "onspaceapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+
+    "jsEngine": "jsc",   ← 👈 ADD THIS LINE HERE
+
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
