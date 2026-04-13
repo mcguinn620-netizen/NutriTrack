@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, Pressable,
   RefreshControl, ActivityIndicator,
@@ -9,7 +9,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLocations } from '@/hooks/useNetNutrition';
-import { getLocationMeta, NNLocation } from '@/services/netNutritionService';
+import {
+  getLocationMeta,
+  getFoodItems,
+  NNLocation,
+  triggerScrape,
+} from '@/services/netNutritionService';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
 import { useCustomMeals } from '@/hooks/useCustomMeals';
@@ -26,6 +31,7 @@ export default function LocationsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [, setItems] = useState<any[]>([]);
   const { isFavorite, toggleFavorite } = useFavorites();
   const { customMeals } = useCustomMeals();
   const today = new Date().toISOString().split('T')[0];
@@ -35,6 +41,22 @@ export default function LocationsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const searchResults = searchQuery.trim() ? searchService.searchMeals(searchQuery) : [];
   const showingSearch = searchQuery.trim().length > 0;
+
+  useEffect(() => {
+    async function load() {
+      try {
+        await triggerScrape();
+      } catch (e) {
+        console.log('Scrape failed, using existing data');
+      }
+
+      const data = await getFoodItems();
+      console.log('Loaded items:', data);
+      setItems(data);
+    }
+
+    load();
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);
