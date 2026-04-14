@@ -9,7 +9,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "typecheck:functions": "deno check supabase/functions/**/*.ts"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

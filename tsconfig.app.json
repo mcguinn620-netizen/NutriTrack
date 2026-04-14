@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "app/**/*.ts",
+    "app/**/*.tsx",
+    "components/**/*.ts",
+    "components/**/*.tsx",
+    "constants/**/*.ts",
+    "constants/**/*.tsx",
+    "contexts/**/*.ts",
+    "contexts/**/*.tsx",
+    "hooks/**/*.ts",
+    "hooks/**/*.tsx",
+    "services/**/*.ts",
+    "services/**/*.tsx",
+    "template/**/*.ts",
+    "template/**/*.tsx",
+    "scripts/**/*.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts",
+    "types/**/*.d.ts"
+  ],
+  "exclude": [
+    "supabase/functions/**/*",
+    "supabase/**/*.ts",
+    "node_modules",
+    "dist",
+    "build",
+    ".expo",
+    "coverage"
+  ]
+}

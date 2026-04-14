@@ -1,4 +1,6 @@
 {
+  // This config is intentionally isolated for Supabase Edge Functions (Deno runtime).
+  // Do not extend app tsconfig files here.
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable", "deno.ns"],
@@ -8,6 +10,6 @@
     "allowImportingTsExtensions": true,
     "types": ["https://deno.land/x/types/index.d.ts"]
   },
-  "include": ["**/*.ts"],
-  "exclude": ["../../node_modules"]
+  "include": ["./**/*.ts"],
+  "exclude": ["../../node_modules", "../../app", "../../components", "../../hooks"]
 }
