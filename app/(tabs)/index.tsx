@@ -11,8 +11,9 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useLocations } from '@/hooks/useNetNutrition';
 import {
   getLocationMeta,
-  netNutritionService,
+  getFoodItems,
   NNLocation,
+  triggerScrape,
 } from '@/services/netNutritionService';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
@@ -42,8 +43,20 @@ export default function LocationsScreen() {
   const showingSearch = searchQuery.trim().length > 0;
 
   useEffect(() => {
-    netNutritionService.refreshDataFromEdge().catch(() => {
-      console.log('Scrape refresh failed, using existing data');
+    async function load() {
+      try {
+        await triggerScrape();
+      } catch (e) {
+        console.log('Scrape failed, using existing data');
+      }
+
+      const data = await getFoodItems();
+      console.log('Loaded items:', data);
+      setItems(data ?? []);
+    }
+
+    load().catch((error) => {
+      console.error('Failed to load Supabase data:', error);
     });
   }, []);
 
