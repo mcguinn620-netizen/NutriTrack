@@ -45,6 +45,8 @@ export interface FoodItem {
   allergens: string[];
   dietary_flags: string[];
   nutrients: Record<string, unknown>;
+  ingredients?: string[] | null;
+  micronutrients?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -187,6 +189,29 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
+
+function normalizeObject(value: unknown): Record<string, unknown> | null {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  return null;
+}
+
 function normalizeNutrients(row: Record<string, unknown>): Record<string, unknown> {
   const fromJson = row.nutrients;
   if (fromJson && typeof fromJson === 'object' && !Array.isArray(fromJson)) {
@@ -219,6 +244,8 @@ function normalizeNutrients(row: Record<string, unknown>): Record<string, unknow
 }
 
 function mapFoodItem(row: Record<string, unknown>): FoodItem {
+  const ingredients = normalizeStringArray(row.ingredients);
+
   return {
     id: String(row.id ?? ''),
     station_id: String(row.station_id ?? ''),
@@ -228,6 +255,8 @@ function mapFoodItem(row: Record<string, unknown>): FoodItem {
     allergens: normalizeStringArray(row.allergens),
     dietary_flags: normalizeStringArray(row.dietary_flags ?? row.dietary_restrictions),
     nutrients: normalizeNutrients(row),
+    ingredients: ingredients.length ? ingredients : null,
+    micronutrients: normalizeObject(row.micronutrients),
     created_at: row.created_at == null ? null : String(row.created_at),
     updated_at: row.updated_at == null ? null : String(row.updated_at),
   };

@@ -1,13 +1,15 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useDiningHalls } from '@/hooks/useNetNutrition';
+import { getRecentFoodItemEntries, RecentFoodItem } from '@/services/recentItemsService';
 import ErrorView from '@/components/ErrorView';
 import { SkeletonList } from '@/components/LoadingSkeletons';
+import RecentItemsSection from '@/components/RecentItemsSection';
 
 function formatLastUpdated(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -24,9 +26,32 @@ export default function DiningHallsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { data: diningHalls, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useDiningHalls();
+  const [recentItems, setRecentItems] = useState<RecentFoodItem[]>([]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void (async () => {
+        const entries = await getRecentFoodItemEntries();
+        if (active) {
+          setRecentItems(entries);
+        }
+      })();
+
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
 
   const lastUpdatedLabel = formatLastUpdated(lastUpdated);
   const isRefreshing = refreshing || loading;
+
+  const handleOpenRecentItem = (item: RecentFoodItem) => {
+    if (item.station_id) {
+      router.push(`/food-items/${item.station_id}?stationName=${encodeURIComponent(item.station_name ?? 'Food Items')}`);
+    }
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
@@ -37,7 +62,7 @@ export default function DiningHallsScreen() {
           <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
         ) : null}
         {isOfflineFallback ? (
-          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}> 
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
           </View>
         ) : null}
@@ -71,6 +96,7 @@ export default function DiningHallsScreen() {
           data={diningHalls}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={<RecentItemsSection items={recentItems} onPressItem={handleOpenRecentItem} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
             <Pressable
@@ -118,7 +144,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     fontWeight: '600',
   },
-  listContent: { padding: spacing.lg },
+  listContent: { padding: spacing.lg, paddingTop: spacing.sm },
   card: {
     borderWidth: 1,
     borderRadius: borderRadius.md,

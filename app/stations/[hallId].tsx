@@ -27,6 +27,7 @@ export default function StationsScreen() {
   const { data: stations, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useStations(hallId);
 
   const lastUpdatedLabel = formatLastUpdated(lastUpdated);
+  const isRefreshing = refreshing || loading;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
@@ -41,6 +42,19 @@ export default function StationsScreen() {
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
           </View>
         ) : null}
+        <Pressable
+          onPress={refresh}
+          disabled={isRefreshing}
+          style={({ pressed }) => [
+            styles.refreshButton,
+            {
+              backgroundColor: pressed ? colors.primaryDark ?? colors.primary : colors.primary,
+              opacity: isRefreshing ? 0.6 : 1,
+            },
+          ]}
+        >
+          <Text style={styles.refreshButtonText}>{isRefreshing ? 'Refreshing...' : 'Refresh from Database'}</Text>
+        </Pressable>
       </View>
 
       {loading ? (
@@ -92,6 +106,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   bannerText: { ...typography.bodySmall },
+  refreshButton: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.sm,
+    alignSelf: 'flex-start',
+  },
+  refreshButtonText: {
+    ...typography.body,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
   listContent: { padding: spacing.lg },
   card: {
     borderWidth: 1,
