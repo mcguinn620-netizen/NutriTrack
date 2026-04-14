@@ -13,7 +13,7 @@ import {
   NNCourse,
   NNItem,
   NNNutrition,
-} from '@/services/netNutritionService';
+} from '@/services/netNutritionService2';
 import { diningLocations } from '@/services/mockData';
 
 // Fallback static list if live fetch fails

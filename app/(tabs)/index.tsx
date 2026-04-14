@@ -11,10 +11,9 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useLocations } from '@/hooks/useNetNutrition';
 import {
   getLocationMeta,
-  getFoodItems,
+  netNutritionService,
   NNLocation,
-  triggerScrape,
-} from '@/services/netNutritionService';
+} from '@/services/netNutritionService2';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
 import { useCustomMeals } from '@/hooks/useCustomMeals';
@@ -43,19 +42,9 @@ export default function LocationsScreen() {
   const showingSearch = searchQuery.trim().length > 0;
 
   useEffect(() => {
-    async function load() {
-      try {
-        await triggerScrape();
-      } catch (e) {
-        console.log('Scrape failed, using existing data');
-      }
-
-      const data = await getFoodItems();
-      console.log('Loaded items:', data);
-      setItems(data);
-    }
-
-    load();
+    netNutritionService.refreshDataFromEdge().catch(() => {
+      console.log('Scrape refresh failed, using existing data');
+    });
   }, []);
 
   const handleRefresh = async () => {

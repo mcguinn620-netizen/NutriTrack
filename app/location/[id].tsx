@@ -15,7 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useMenus, useCourses, useItems, useNutrition } from '@/hooks/useNetNutrition';
-import { NNItem, NNMenu, NNCourse } from '@/services/netNutritionService';
+import { NNItem, NNMenu, NNCourse } from '@/services/netNutritionService2';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
 import { Meal, mockMeals, diningLocations } from '@/services/mockData';
