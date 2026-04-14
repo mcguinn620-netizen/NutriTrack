@@ -5,23 +5,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/contexts/ThemeContext';
 import { spacing, typography } from '@/constants/theme';
 
-const NET_NUTRITION_URL = 'http://netnutrition.bsu.edu/NetNutrition/1#';
+const SUPABASE_DASHBOARD_URL = 'https://supabase.com/dashboard';
 
 export default function BrowserTabWeb() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   const openExternalBrowser = async () => {
-    console.log('[BrowserTab] Opening external browser:', NET_NUTRITION_URL);
-    await Linking.openURL(NET_NUTRITION_URL);
+    console.log('[BrowserTab] Opening external browser:', SUPABASE_DASHBOARD_URL);
+    await Linking.openURL(SUPABASE_DASHBOARD_URL);
   };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
       <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}> 
-        <Text style={[styles.title, { color: colors.text }]}>NetNutrition Browser</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Supabase Browser</Text>
         <Text numberOfLines={1} style={[styles.urlText, { color: colors.textSecondary }]}>
-          {NET_NUTRITION_URL}
+          {SUPABASE_DASHBOARD_URL}
         </Text>
       </View>
 
@@ -46,7 +46,7 @@ export default function BrowserTabWeb() {
       <View style={styles.webFallback}>
         <Text style={[styles.webFallbackTitle, { color: colors.text }]}>In-app browsing is unavailable on web.</Text>
         <Text style={[styles.webFallbackBody, { color: colors.textSecondary }]}>
-          Use the open button above to launch NetNutrition in a new browser tab.
+          Use the open button above to launch Supabase in a new browser tab.
         </Text>
       </View>
     </View>
