@@ -172,6 +172,7 @@ function mapFoodItem(row: Record<string, unknown>): FoodItem {
 
 export async function getDiningHalls(): Promise<DiningHall[]> {
   const cacheKey = 'dining_halls';
+  const tableName = 'dining_halls';
   const memoryCached = getMemoryCache<DiningHall[]>(cacheKey);
   if (memoryCached) return memoryCached;
 
@@ -179,13 +180,23 @@ export async function getDiningHalls(): Promise<DiningHall[]> {
   if (storageCached) return storageCached;
 
   const { data, error } = await supabase
-    .from('dining_halls')
+    .from(tableName)
     .select('id,name')
     .order('name', { ascending: true });
 
   if (error) {
-    console.error('[netNutritionService] getDiningHalls failed:', error);
-    throw error;
+    const resolvedMessage = error.message || 'Unknown Supabase error';
+    const code = 'code' in error ? error.code : undefined;
+    const details = 'details' in error ? error.details : undefined;
+    const hint = 'hint' in error ? error.hint : undefined;
+    console.error('[netNutritionService] getDiningHalls failed:', {
+      tableName,
+      message: resolvedMessage,
+      code,
+      details,
+      hint,
+    });
+    throw new Error(resolvedMessage);
   }
 
   const halls = (data ?? []).map((hall) => ({

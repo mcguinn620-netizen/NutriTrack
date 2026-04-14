@@ -9,6 +9,21 @@ import {
   refreshFromDatabase,
 } from '@/services/netNutritionService';
 
+function resolveErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+
+  if (err && typeof err === 'object' && 'message' in err) {
+    const message = err.message;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return message;
+    }
+  }
+
+  return fallback;
+}
+
 export function useDiningHalls() {
   const [data, setData] = useState<DiningHall[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,7 +37,7 @@ export function useDiningHalls() {
       setData(result);
     } catch (err) {
       console.error('[useDiningHalls] load failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load dining halls');
+      setError(resolveErrorMessage(err, 'Failed to load dining halls'));
       setData([]);
     } finally {
       setLoading(false);
@@ -59,7 +74,7 @@ export function useStations(hallId?: string) {
       setData(result);
     } catch (err) {
       console.error('[useStations] load failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load stations');
+      setError(resolveErrorMessage(err, 'Failed to load stations'));
       setData([]);
     } finally {
       setLoading(false);
@@ -91,7 +106,7 @@ export function useFoodItems(stationId?: string) {
       setData(result);
     } catch (err) {
       console.error('[useFoodItems] load failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load food items');
+      setError(resolveErrorMessage(err, 'Failed to load food items'));
       setData([]);
     } finally {
       setLoading(false);
