@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: nutritrack-scraper
-    env: node
-    rootDir: scraper-render
-    buildCommand: npm install
-    startCommand: npm start
-    plan: free
