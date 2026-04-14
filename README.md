@@ -11,8 +11,8 @@ App (Expo / React Native) → Supabase Edge Function (`netnutrition-scrape`) →
 Create `.env` with only:
 
 ```bash
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
+EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 ## Local development
