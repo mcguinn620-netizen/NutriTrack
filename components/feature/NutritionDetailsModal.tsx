@@ -11,7 +11,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Meal } from '@/services/mockData';
+import { Meal } from '@/services/types';
 import { MacroCard } from '@/components/ui/MacroCard';
 import { LoggedMeal } from '@/services/storage';
 

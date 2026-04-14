@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Meal } from '@/services/mockData';
+import { Meal } from '@/services/types';
 
 interface MealCardProps {
   meal: Meal;
