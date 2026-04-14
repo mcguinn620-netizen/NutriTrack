@@ -11,6 +11,16 @@ interface CachedPayload<T> {
   timestamp: number;
 }
 
+export interface NetNutritionResult<T> {
+  data: T;
+  timestamp: number | null;
+  isOfflineFallback: boolean;
+}
+
+interface QueryOptions {
+  forceRefresh?: boolean;
+}
+
 export interface DiningHall {
   id: string;
   name: string;
@@ -43,7 +53,15 @@ function isExpired(timestamp: number): boolean {
   return Date.now() - timestamp > CACHE_TTL;
 }
 
-function getMemoryCache<T>(key: string): T | null {
+function getStorageKey(cacheKey: string): string {
+  return `${NUTRITION_CACHE_KEY_PREFIX}${cacheKey}`;
+}
+
+function shouldManageNutritionKey(cacheKey: string): boolean {
+  return NUTRITION_KEY_PREFIXES.some((prefix) => cacheKey.startsWith(prefix));
+}
+
+function getMemoryCacheEntry<T>(key: string): CachedPayload<T> | null {
   const item = cache.get(key);
   if (!item) return null;
 
@@ -52,7 +70,10 @@ function getMemoryCache<T>(key: string): T | null {
     return null;
   }
 
-  return item.data as T;
+  return {
+    data: item.data as T,
+    timestamp: item.timestamp,
+  };
 }
 
 function setMemoryCache<T>(key: string, data: T, timestamp = Date.now()): void {
@@ -62,17 +83,14 @@ function setMemoryCache<T>(key: string, data: T, timestamp = Date.now()): void {
   });
 }
 
-function getStorageKey(cacheKey: string): string {
-  return `${NUTRITION_CACHE_KEY_PREFIX}${cacheKey}`;
-}
-
-function shouldManageNutritionKey(cacheKey: string): boolean {
-  return NUTRITION_KEY_PREFIXES.some((prefix) => cacheKey.startsWith(prefix));
-}
-
-export async function loadCachedValue<T>(key: string): Promise<T | null> {
+async function loadCachedPayload<T>(key: string): Promise<CachedPayload<T> | null> {
   if (!shouldManageNutritionKey(key)) {
     return null;
+  }
+
+  const memoryCached = getMemoryCacheEntry<T>(key);
+  if (memoryCached) {
+    return memoryCached;
   }
 
   try {
@@ -92,11 +110,21 @@ export async function loadCachedValue<T>(key: string): Promise<T | null> {
     }
 
     setMemoryCache(key, parsed.data, parsed.timestamp);
-    return parsed.data;
+    return parsed;
   } catch (error) {
     console.warn('[netNutritionService] Failed to load cache value:', { key, error });
     return null;
   }
+}
+
+export async function loadCachedValue<T>(key: string): Promise<T | null> {
+  const payload = await loadCachedPayload<T>(key);
+  return payload?.data ?? null;
+}
+
+export async function getCacheTimestamp(key: string): Promise<number | null> {
+  const payload = await loadCachedPayload<unknown>(key);
+  return payload?.timestamp ?? null;
 }
 
 export async function saveCachedValue<T>(key: string, data: T): Promise<void> {
@@ -205,112 +233,166 @@ function mapFoodItem(row: Record<string, unknown>): FoodItem {
   };
 }
 
-export async function getDiningHalls(): Promise<DiningHall[]> {
-  const cacheKey = 'dining_halls';
+async function fetchWithCacheFallback<T>(
+  cacheKey: string,
+  fetcher: () => Promise<T>,
+  options?: QueryOptions,
+): Promise<NetNutritionResult<T>> {
+  const cached = await loadCachedPayload<T>(cacheKey);
+  if (cached && !options?.forceRefresh) {
+    return {
+      data: cached.data,
+      timestamp: cached.timestamp,
+      isOfflineFallback: false,
+    };
+  }
+
+  try {
+    const data = await fetcher();
+    await saveCachedValue(cacheKey, data);
+    const timestamp = await getCacheTimestamp(cacheKey);
+
+    return {
+      data,
+      timestamp,
+      isOfflineFallback: false,
+    };
+  } catch (error) {
+    if (cached) {
+      console.warn('[netNutritionService] Returning cached fallback after fetch failure:', { cacheKey, error });
+      return {
+        data: cached.data,
+        timestamp: cached.timestamp,
+        isOfflineFallback: true,
+      };
+    }
+
+    throw error;
+  }
+}
+
+export async function getDiningHallsResult(options?: QueryOptions): Promise<NetNutritionResult<DiningHall[]>> {
   const tableName = 'dining_halls';
-  const memoryCached = getMemoryCache<DiningHall[]>(cacheKey);
-  if (memoryCached) return memoryCached;
+  const cacheKey = 'dining_halls';
 
-  const storageCached = await loadCachedValue<DiningHall[]>(cacheKey);
-  if (storageCached) return storageCached;
+  return fetchWithCacheFallback<DiningHall[]>(
+    cacheKey,
+    async () => {
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('id,name,unit_oid,created_at')
+        .order('name', { ascending: true });
 
-  const { data, error } = await supabase
-    .from(tableName)
-    .select('id,name,unit_oid,created_at')
-    .order('name', { ascending: true });
+      if (error) {
+        const resolvedMessage = error.message || 'Unknown Supabase error';
+        const code = 'code' in error ? error.code : undefined;
+        const details = 'details' in error ? error.details : undefined;
+        const hint = 'hint' in error ? error.hint : undefined;
+        console.error('[netNutritionService] getDiningHalls failed:', {
+          tableName,
+          filterColumn: null,
+          filterValue: null,
+          error,
+          message: resolvedMessage,
+          code,
+          details,
+          hint,
+        });
+        throw new Error(resolvedMessage);
+      }
 
-  if (error) {
-    const resolvedMessage = error.message || 'Unknown Supabase error';
-    const code = 'code' in error ? error.code : undefined;
-    const details = 'details' in error ? error.details : undefined;
-    const hint = 'hint' in error ? error.hint : undefined;
-    console.error('[netNutritionService] getDiningHalls failed:', {
-      tableName,
-      filterColumn: null,
-      filterValue: null,
-      error,
-      message: resolvedMessage,
-      code,
-      details,
-      hint,
-    });
-    throw new Error(resolvedMessage);
-  }
-
-  const halls = (data ?? []).map((hall) => ({
-    id: String(hall.id),
-    name: String(hall.name ?? 'Unknown Hall'),
-    unit_oid: hall.unit_oid == null ? null : Number(hall.unit_oid),
-    created_at: hall.created_at == null ? null : String(hall.created_at),
-  }));
-
-  await saveCachedValue(cacheKey, halls);
-  return halls;
+      return (data ?? []).map((hall) => ({
+        id: String(hall.id),
+        name: String(hall.name ?? 'Unknown Hall'),
+        unit_oid: hall.unit_oid == null ? null : Number(hall.unit_oid),
+        created_at: hall.created_at == null ? null : String(hall.created_at),
+      }));
+    },
+    options,
+  );
 }
 
-export async function getStationsByHall(hallId: string): Promise<Station[]> {
+export async function getStationsByHallResult(
+  hallId: string,
+  options?: QueryOptions,
+): Promise<NetNutritionResult<Station[]>> {
   const cacheKey = `stations:${hallId}`;
-  const memoryCached = getMemoryCache<Station[]>(cacheKey);
-  if (memoryCached) return memoryCached;
 
-  const storageCached = await loadCachedValue<Station[]>(cacheKey);
-  if (storageCached) return storageCached;
+  return fetchWithCacheFallback<Station[]>(
+    cacheKey,
+    async () => {
+      const { data, error } = await supabase
+        .from('stations')
+        .select('id,dining_hall_id,name,unit_oid,created_at')
+        .eq('dining_hall_id', hallId)
+        .order('name', { ascending: true });
 
-  const { data, error } = await supabase
-    .from('stations')
-    .select('id,dining_hall_id,name,unit_oid,created_at')
-    .eq('dining_hall_id', hallId)
-    .order('name', { ascending: true });
+      if (error) {
+        console.error('[netNutritionService] getStationsByHall failed:', {
+          tableName: 'stations',
+          filterColumn: 'dining_hall_id',
+          filterValue: hallId,
+          error,
+        });
+        throw error;
+      }
 
-  if (error) {
-    console.error('[netNutritionService] getStationsByHall failed:', {
-      tableName: 'stations',
-      filterColumn: 'dining_hall_id',
-      filterValue: hallId,
-      error,
-    });
-    throw error;
-  }
-
-  const stations = (data ?? []).map((station) => ({
-    id: String(station.id),
-    dining_hall_id: String(station.dining_hall_id),
-    name: String(station.name ?? 'Unknown Station'),
-    unit_oid: station.unit_oid == null ? null : Number(station.unit_oid),
-    created_at: station.created_at == null ? null : String(station.created_at),
-  }));
-
-  await saveCachedValue(cacheKey, stations);
-  return stations;
+      return (data ?? []).map((station) => ({
+        id: String(station.id),
+        dining_hall_id: String(station.dining_hall_id),
+        name: String(station.name ?? 'Unknown Station'),
+        unit_oid: station.unit_oid == null ? null : Number(station.unit_oid),
+        created_at: station.created_at == null ? null : String(station.created_at),
+      }));
+    },
+    options,
+  );
 }
 
-export async function getFoodItemsByStation(stationId: string): Promise<FoodItem[]> {
+export async function getFoodItemsByStationResult(
+  stationId: string,
+  options?: QueryOptions,
+): Promise<NetNutritionResult<FoodItem[]>> {
   const cacheKey = `food_items:${stationId}`;
-  const memoryCached = getMemoryCache<FoodItem[]>(cacheKey);
-  if (memoryCached) return memoryCached;
 
-  const storageCached = await loadCachedValue<FoodItem[]>(cacheKey);
-  if (storageCached) return storageCached;
+  return fetchWithCacheFallback<FoodItem[]>(
+    cacheKey,
+    async () => {
+      const { data, error } = await supabase
+        .from('food_items')
+        .select('*')
+        .eq('station_id', stationId)
+        .order('name', { ascending: true });
 
-  const { data, error } = await supabase
-    .from('food_items')
-    .select('*')
-    .eq('station_id', stationId)
-    .order('name', { ascending: true });
+      if (error) {
+        console.error('[netNutritionService] getFoodItemsByStation failed:', {
+          tableName: 'food_items',
+          filterColumn: 'station_id',
+          filterValue: stationId,
+          error,
+        });
+        throw error;
+      }
 
-  if (error) {
-    console.error('[netNutritionService] getFoodItemsByStation failed:', {
-      tableName: 'food_items',
-      filterColumn: 'station_id',
-      filterValue: stationId,
-      error,
-    });
-    throw error;
-  }
+      return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
+    },
+    options,
+  );
+}
 
-  const mappedItems = (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
-  await saveCachedValue(cacheKey, mappedItems);
-  return mappedItems;
+export async function getDiningHalls(options?: QueryOptions): Promise<DiningHall[]> {
+  const result = await getDiningHallsResult(options);
+  return result.data;
+}
+
+export async function getStationsByHall(hallId: string, options?: QueryOptions): Promise<Station[]> {
+  const result = await getStationsByHallResult(hallId, options);
+  return result.data;
+}
+
+export async function getFoodItemsByStation(stationId: string, options?: QueryOptions): Promise<FoodItem[]> {
+  const result = await getFoodItemsByStationResult(stationId, options);
+  return result.data;
 }
 
 export async function refreshFromDatabase(): Promise<boolean> {

@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   DiningHall,
   FoodItem,
   Station,
-  getDiningHalls,
-  getFoodItemsByStation,
-  getStationsByHall,
-  refreshFromDatabase,
+  getDiningHallsResult,
+  getFoodItemsByStationResult,
+  getStationsByHallResult,
 } from '@/services/netNutritionService';
 
 function resolveErrorMessage(err: unknown, fallback: string): string {
@@ -24,98 +23,211 @@ function resolveErrorMessage(err: unknown, fallback: string): string {
   return fallback;
 }
 
-export function useDiningHalls() {
-  const [data, setData] = useState<DiningHall[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface LoaderState<T> {
+  data: T[];
+  loading: boolean;
+  refreshing: boolean;
+  error: string | null;
+  lastUpdated: number | null;
+  isOfflineFallback: boolean;
+}
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+function useInitialLoadGuard(key: string | undefined, callback: () => Promise<void>) {
+  const initializedForKey = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (initializedForKey.current === key) {
+      return;
+    }
+
+    initializedForKey.current = key;
+    void callback();
+  }, [callback, key]);
+}
+
+export function useDiningHalls() {
+  const [state, setState] = useState<LoaderState<DiningHall>>({
+    data: [],
+    loading: true,
+    refreshing: false,
+    error: null,
+    lastUpdated: null,
+    isOfflineFallback: false,
+  });
+  const inFlightRef = useRef(false);
+
+  const load = useCallback(async (options?: { forceRefresh?: boolean }) => {
+    if (inFlightRef.current) {
+      return;
+    }
+
+    inFlightRef.current = true;
+    setState((prev) => ({
+      ...prev,
+      loading: options?.forceRefresh ? prev.loading : true,
+      refreshing: !!options?.forceRefresh,
+      error: null,
+      isOfflineFallback: false,
+    }));
+
     try {
-      const result = await getDiningHalls();
-      setData(result);
+      const result = await getDiningHallsResult(options);
+      setState((prev) => ({
+        ...prev,
+        data: result.data,
+        error: null,
+        lastUpdated: result.timestamp,
+        isOfflineFallback: result.isOfflineFallback,
+      }));
     } catch (err) {
       console.error('[useDiningHalls] load failed:', err);
-      setError(resolveErrorMessage(err, 'Failed to load dining halls'));
-      setData([]);
+      setState((prev) => ({
+        ...prev,
+        data: [],
+        error: resolveErrorMessage(err, 'Failed to load dining halls'),
+        isOfflineFallback: false,
+      }));
     } finally {
-      setLoading(false);
+      inFlightRef.current = false;
+      setState((prev) => ({ ...prev, loading: false, refreshing: false }));
     }
   }, []);
 
+  useInitialLoadGuard('dining_halls', load);
+
   const refresh = useCallback(async () => {
-    await refreshFromDatabase();
-    await load();
+    await load({ forceRefresh: true });
   }, [load]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { data, loading, error, refresh };
+  return { ...state, refresh };
 }
 
 export function useStations(hallId?: string) {
-  const [data, setData] = useState<Station[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<LoaderState<Station>>({
+    data: [],
+    loading: false,
+    refreshing: false,
+    error: null,
+    lastUpdated: null,
+    isOfflineFallback: false,
+  });
+  const inFlightRef = useRef<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!hallId) {
-      setData([]);
-      return;
-    }
+  const load = useCallback(
+    async (options?: { forceRefresh?: boolean }) => {
+      if (!hallId) {
+        setState((prev) => ({ ...prev, data: [], loading: false, refreshing: false, error: null }));
+        return;
+      }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await getStationsByHall(hallId);
-      setData(result);
-    } catch (err) {
-      console.error('[useStations] load failed:', err);
-      setError(resolveErrorMessage(err, 'Failed to load stations'));
-      setData([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [hallId]);
+      if (inFlightRef.current === hallId) {
+        return;
+      }
 
-  useEffect(() => {
-    load();
+      inFlightRef.current = hallId;
+      setState((prev) => ({
+        ...prev,
+        loading: options?.forceRefresh ? prev.loading : true,
+        refreshing: !!options?.forceRefresh,
+        error: null,
+        isOfflineFallback: false,
+      }));
+
+      try {
+        const result = await getStationsByHallResult(hallId, options);
+        setState((prev) => ({
+          ...prev,
+          data: result.data,
+          error: null,
+          lastUpdated: result.timestamp,
+          isOfflineFallback: result.isOfflineFallback,
+        }));
+      } catch (err) {
+        console.error('[useStations] load failed:', err);
+        setState((prev) => ({
+          ...prev,
+          data: [],
+          error: resolveErrorMessage(err, 'Failed to load stations'),
+          isOfflineFallback: false,
+        }));
+      } finally {
+        inFlightRef.current = null;
+        setState((prev) => ({ ...prev, loading: false, refreshing: false }));
+      }
+    },
+    [hallId],
+  );
+
+  useInitialLoadGuard(hallId, load);
+
+  const refresh = useCallback(async () => {
+    await load({ forceRefresh: true });
   }, [load]);
 
-  return { data, loading, error, refresh: load };
+  return { ...state, refresh };
 }
 
 export function useFoodItems(stationId?: string) {
-  const [data, setData] = useState<FoodItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<LoaderState<FoodItem>>({
+    data: [],
+    loading: false,
+    refreshing: false,
+    error: null,
+    lastUpdated: null,
+    isOfflineFallback: false,
+  });
+  const inFlightRef = useRef<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!stationId) {
-      setData([]);
-      return;
-    }
+  const load = useCallback(
+    async (options?: { forceRefresh?: boolean }) => {
+      if (!stationId) {
+        setState((prev) => ({ ...prev, data: [], loading: false, refreshing: false, error: null }));
+        return;
+      }
 
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await getFoodItemsByStation(stationId);
-      setData(result);
-    } catch (err) {
-      console.error('[useFoodItems] load failed:', err);
-      setError(resolveErrorMessage(err, 'Failed to load food items'));
-      setData([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [stationId]);
+      if (inFlightRef.current === stationId) {
+        return;
+      }
 
-  useEffect(() => {
-    load();
+      inFlightRef.current = stationId;
+      setState((prev) => ({
+        ...prev,
+        loading: options?.forceRefresh ? prev.loading : true,
+        refreshing: !!options?.forceRefresh,
+        error: null,
+        isOfflineFallback: false,
+      }));
+
+      try {
+        const result = await getFoodItemsByStationResult(stationId, options);
+        setState((prev) => ({
+          ...prev,
+          data: result.data,
+          error: null,
+          lastUpdated: result.timestamp,
+          isOfflineFallback: result.isOfflineFallback,
+        }));
+      } catch (err) {
+        console.error('[useFoodItems] load failed:', err);
+        setState((prev) => ({
+          ...prev,
+          data: [],
+          error: resolveErrorMessage(err, 'Failed to load food items'),
+          isOfflineFallback: false,
+        }));
+      } finally {
+        inFlightRef.current = null;
+        setState((prev) => ({ ...prev, loading: false, refreshing: false }));
+      }
+    },
+    [stationId],
+  );
+
+  useInitialLoadGuard(stationId, load);
+
+  const refresh = useCallback(async () => {
+    await load({ forceRefresh: true });
   }, [load]);
 
-  return { data, loading, error, refresh: load };
+  return { ...state, refresh };
 }
