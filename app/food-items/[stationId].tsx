@@ -1,19 +1,17 @@
-import React, { useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { spacing, typography, borderRadius } from '@/constants/theme';
+import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useFoodItems } from '@/hooks/useNetNutrition';
 import { FoodItem } from '@/services/netNutritionService';
+import { getFavoriteFoodItemIds, toggleFavoriteFoodItem } from '@/services/favoritesService';
+import { recordRecentFoodItem } from '@/services/recentItemsService';
 import ErrorView from '@/components/ErrorView';
 import { SkeletonList } from '@/components/LoadingSkeletons';
-
-function formatNutrientLabel(key: string) {
-  return key
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
+import FoodItemCard from '@/components/FoodItemCard';
+import FilterPanel from '@/components/FilterPanel';
 
 function formatLastUpdated(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -33,18 +31,22 @@ export default function FoodItemsScreen() {
 
   const [selectedAllergens, setSelectedAllergens] = useState<string[]>([]);
   const [selectedFlags, setSelectedFlags] = useState<string[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
-  const allergenOptions = useMemo(
-    () => Array.from(new Set(items.flatMap((item) => item.allergens))).sort(),
-    [items],
-  );
-  const flagOptions = useMemo(
-    () => Array.from(new Set(items.flatMap((item) => item.dietary_flags))).sort(),
-    [items],
-  );
+  useEffect(() => {
+    void (async () => {
+      const initialFavorites = await getFavoriteFoodItemIds();
+      setFavorites(initialFavorites);
+    })();
+  }, []);
+
+  const allergenOptions = useMemo(() => Array.from(new Set(items.flatMap((item) => item.allergens))).sort(), [items]);
+  const flagOptions = useMemo(() => Array.from(new Set(items.flatMap((item) => item.dietary_flags))).sort(), [items]);
 
   const hasActiveFilters = selectedAllergens.length > 0 || selectedFlags.length > 0;
   const lastUpdatedLabel = formatLastUpdated(lastUpdated);
+  const isRefreshing = refreshing || loading;
 
   const filteredItems = useMemo(
     () =>
@@ -66,31 +68,19 @@ export default function FoodItemsScreen() {
     setSelected(selected.includes(value) ? selected.filter((v) => v !== value) : [...selected, value]);
   };
 
-  const renderFoodItem = ({ item }: { item: FoodItem }) => {
-    const nutrientEntries = Object.entries(item.nutrients ?? {});
+  const handleToggleFavorite = async (id: string) => {
+    setFavorites((prev) => (prev.includes(id) ? prev.filter((itemId) => itemId !== id) : [...prev, id]));
+    const persisted = await toggleFavoriteFoodItem(id);
+    setFavorites(persisted);
+  };
 
-    return (
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}> 
-        <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
-        <Text style={[styles.meta, { color: colors.textSecondary }]}>Serving Size: {item.serving_size}</Text>
-        <Text style={[styles.meta, { color: colors.textSecondary }]}>Allergens: {item.allergens.join(', ') || 'None'}</Text>
-        <Text style={[styles.meta, { color: colors.textSecondary }]}>Dietary Flags: {item.dietary_flags.join(', ') || 'None'}</Text>
-
-        <View style={styles.nutrientsContainer}>
-          <Text style={[styles.nutrientsTitle, { color: colors.text }]}>Nutrients</Text>
-          {nutrientEntries.length === 0 ? (
-            <Text style={[styles.meta, { color: colors.textSecondary }]}>N/A</Text>
-          ) : (
-            nutrientEntries.map(([key, value]) => (
-              <View key={`${item.id}-${key}`} style={styles.nutrientRow}>
-                <Text style={[styles.nutrientLabel, { color: colors.textSecondary }]}>{formatNutrientLabel(key)}</Text>
-                <Text style={[styles.nutrientValue, { color: colors.text }]}>{String(value)}</Text>
-              </View>
-            ))
-          )}
-        </View>
-      </View>
-    );
+  const handleViewItem = async (item: FoodItem) => {
+    await recordRecentFoodItem({
+      id: item.id,
+      name: item.name,
+      station_id: item.station_id,
+      station_name: stationName,
+    });
   };
 
   const renderEmptyState = () => {
@@ -122,54 +112,36 @@ export default function FoodItemsScreen() {
           <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
         ) : null}
         {isOfflineFallback ? (
-          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}> 
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
           </View>
         ) : null}
-      </View>
-
-      <View style={styles.filterRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersContainer}>
-          {allergenOptions.map((allergen) => (
-            <Pressable
-              key={`a-${allergen}`}
-              onPress={() => toggleFilter(allergen, selectedAllergens, setSelectedAllergens)}
-              style={[styles.chip, { backgroundColor: selectedAllergens.includes(allergen) ? colors.primary : colors.surface, borderColor: colors.border }]}
-            >
-              <Text style={{ color: selectedAllergens.includes(allergen) ? '#fff' : colors.text }}>A: {allergen}</Text>
-            </Pressable>
-          ))}
-          {flagOptions.map((flag) => (
-            <Pressable
-              key={`f-${flag}`}
-              onPress={() => toggleFilter(flag, selectedFlags, setSelectedFlags)}
-              style={[styles.chip, { backgroundColor: selectedFlags.includes(flag) ? colors.primary : colors.surface, borderColor: colors.border }]}
-            >
-              <Text style={{ color: selectedFlags.includes(flag) ? '#fff' : colors.text }}>D: {flag}</Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-
         <Pressable
-          onPress={clearFilters}
-          style={[
-            styles.clearButton,
+          onPress={refresh}
+          disabled={isRefreshing}
+          style={({ pressed }) => [
+            styles.refreshButton,
             {
-              backgroundColor: hasActiveFilters ? colors.primary : colors.surface,
-              borderColor: colors.border,
+              backgroundColor: pressed ? colors.primaryDark ?? colors.primary : colors.primary,
+              opacity: isRefreshing ? 0.6 : 1,
             },
           ]}
         >
-          <Text
-            style={{
-              color: hasActiveFilters ? '#fff' : colors.textSecondary,
-              fontWeight: hasActiveFilters ? '600' : '400',
-            }}
-          >
-            Clear Filters
-          </Text>
+          <Text style={styles.refreshButtonText}>{isRefreshing ? 'Refreshing...' : 'Refresh from Database'}</Text>
         </Pressable>
       </View>
+
+      <FilterPanel
+        open={filtersOpen}
+        allergenOptions={allergenOptions}
+        flagOptions={flagOptions}
+        selectedAllergens={selectedAllergens}
+        selectedFlags={selectedFlags}
+        onToggleOpen={() => setFiltersOpen((prev) => !prev)}
+        onToggleAllergen={(value) => toggleFilter(value, selectedAllergens, setSelectedAllergens)}
+        onToggleFlag={(value) => toggleFilter(value, selectedFlags, setSelectedFlags)}
+        onClear={clearFilters}
+      />
 
       {loading ? (
         <SkeletonList count={5} type="food" />
@@ -183,7 +155,14 @@ export default function FoodItemsScreen() {
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-          renderItem={renderFoodItem}
+          renderItem={({ item }) => (
+            <FoodItemCard
+              item={item}
+              isFavorite={favorites.includes(item.id)}
+              onToggleFavorite={handleToggleFavorite}
+              onViewed={handleViewItem}
+            />
+          )}
         />
       )}
     </View>
@@ -203,27 +182,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   bannerText: { ...typography.bodySmall },
-  filterRow: { marginBottom: spacing.sm },
-  filtersContainer: { paddingHorizontal: spacing.lg, gap: spacing.xs, paddingBottom: spacing.sm, paddingRight: spacing.xl },
-  chip: { borderWidth: 1, borderRadius: borderRadius.full, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
-  clearButton: {
-    alignSelf: 'flex-end',
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.xs,
-    borderWidth: 1,
-    borderRadius: borderRadius.full,
+  refreshButton: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    borderRadius: borderRadius.sm,
+    alignSelf: 'flex-start',
+  },
+  refreshButtonText: {
+    ...typography.body,
+    fontWeight: '600',
+    color: '#ffffff',
   },
   listContent: { padding: spacing.lg, paddingTop: spacing.sm },
-  card: { borderWidth: 1, borderRadius: borderRadius.md, padding: spacing.md, marginBottom: spacing.sm },
-  name: { ...typography.h3, marginBottom: spacing.xs },
-  meta: { ...typography.bodySmall, marginBottom: 4 },
-  nutrientsContainer: { marginTop: spacing.xs, gap: 4 },
-  nutrientsTitle: { ...typography.body, fontWeight: '600' },
-  nutrientRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
-  nutrientLabel: { ...typography.bodySmall, flex: 1 },
-  nutrientValue: { ...typography.bodySmall, fontWeight: '600' },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   stateText: { ...typography.body, textAlign: 'center' },
   emptyTitle: { ...typography.h3, marginBottom: spacing.xs, textAlign: 'center' },
