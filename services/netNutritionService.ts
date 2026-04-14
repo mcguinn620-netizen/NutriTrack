@@ -14,22 +14,29 @@ interface CachedPayload<T> {
 export interface DiningHall {
   id: string;
   name: string;
+  unit_oid?: number | null;
+  created_at?: string | null;
 }
 
 export interface Station {
   id: string;
-  hall_id: string;
+  dining_hall_id: string;
   name: string;
+  unit_oid?: number | null;
+  created_at?: string | null;
 }
 
 export interface FoodItem {
   id: string;
   station_id: string;
   name: string;
+  detail_oid?: number | null;
   serving_size: string;
   allergens: string[];
   dietary_flags: string[];
   nutrients: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 function isExpired(timestamp: number): boolean {
@@ -131,6 +138,18 @@ function normalizeStringArray(value: unknown): string[] {
   }
 
   if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return normalizeStringArray(parsed);
+        }
+      } catch {
+        // Fall back to comma-separated parsing
+      }
+    }
+
     return value
       .split(',')
       .map((entry) => entry.trim())
@@ -144,6 +163,19 @@ function normalizeNutrients(row: Record<string, unknown>): Record<string, unknow
   const fromJson = row.nutrients;
   if (fromJson && typeof fromJson === 'object' && !Array.isArray(fromJson)) {
     return fromJson as Record<string, unknown>;
+  }
+  if (typeof fromJson === 'string') {
+    const trimmed = fromJson.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        // Fall back to legacy nutrient mapping
+      }
+    }
   }
 
   return {
@@ -163,10 +195,13 @@ function mapFoodItem(row: Record<string, unknown>): FoodItem {
     id: String(row.id ?? ''),
     station_id: String(row.station_id ?? ''),
     name: String(row.name ?? 'Unknown Item'),
+    detail_oid: row.detail_oid == null ? null : Number(row.detail_oid),
     serving_size: String(row.serving_size ?? row.serving ?? 'N/A'),
     allergens: normalizeStringArray(row.allergens),
     dietary_flags: normalizeStringArray(row.dietary_flags ?? row.dietary_restrictions),
     nutrients: normalizeNutrients(row),
+    created_at: row.created_at == null ? null : String(row.created_at),
+    updated_at: row.updated_at == null ? null : String(row.updated_at),
   };
 }
 
@@ -181,7 +216,7 @@ export async function getDiningHalls(): Promise<DiningHall[]> {
 
   const { data, error } = await supabase
     .from(tableName)
-    .select('id,name')
+    .select('id,name,unit_oid,created_at')
     .order('name', { ascending: true });
 
   if (error) {
@@ -191,6 +226,9 @@ export async function getDiningHalls(): Promise<DiningHall[]> {
     const hint = 'hint' in error ? error.hint : undefined;
     console.error('[netNutritionService] getDiningHalls failed:', {
       tableName,
+      filterColumn: null,
+      filterValue: null,
+      error,
       message: resolvedMessage,
       code,
       details,
@@ -202,6 +240,8 @@ export async function getDiningHalls(): Promise<DiningHall[]> {
   const halls = (data ?? []).map((hall) => ({
     id: String(hall.id),
     name: String(hall.name ?? 'Unknown Hall'),
+    unit_oid: hall.unit_oid == null ? null : Number(hall.unit_oid),
+    created_at: hall.created_at == null ? null : String(hall.created_at),
   }));
 
   await saveCachedValue(cacheKey, halls);
@@ -218,19 +258,26 @@ export async function getStationsByHall(hallId: string): Promise<Station[]> {
 
   const { data, error } = await supabase
     .from('stations')
-    .select('id,hall_id,name')
-    .eq('hall_id', hallId)
+    .select('id,dining_hall_id,name,unit_oid,created_at')
+    .eq('dining_hall_id', hallId)
     .order('name', { ascending: true });
 
   if (error) {
-    console.error('[netNutritionService] getStationsByHall failed:', { hallId, error });
+    console.error('[netNutritionService] getStationsByHall failed:', {
+      tableName: 'stations',
+      filterColumn: 'dining_hall_id',
+      filterValue: hallId,
+      error,
+    });
     throw error;
   }
 
   const stations = (data ?? []).map((station) => ({
     id: String(station.id),
-    hall_id: String(station.hall_id),
+    dining_hall_id: String(station.dining_hall_id),
     name: String(station.name ?? 'Unknown Station'),
+    unit_oid: station.unit_oid == null ? null : Number(station.unit_oid),
+    created_at: station.created_at == null ? null : String(station.created_at),
   }));
 
   await saveCachedValue(cacheKey, stations);
@@ -252,7 +299,12 @@ export async function getFoodItemsByStation(stationId: string): Promise<FoodItem
     .order('name', { ascending: true });
 
   if (error) {
-    console.error('[netNutritionService] getFoodItemsByStation failed:', { stationId, error });
+    console.error('[netNutritionService] getFoodItemsByStation failed:', {
+      tableName: 'food_items',
+      filterColumn: 'station_id',
+      filterValue: stationId,
+      error,
+    });
     throw error;
   }
 
