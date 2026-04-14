@@ -13,7 +13,7 @@ import {
   getLocationMeta,
   netNutritionService,
   NNLocation,
-} from '@/services/netNutritionService2';
+} from '@/services/netNutritionService';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
 import { useCustomMeals } from '@/hooks/useCustomMeals';
