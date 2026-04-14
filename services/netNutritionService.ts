@@ -1,12 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase, SUPABASE_ANON_KEY, SUPABASE_URL } from '@/services/supabaseClient';
 
 const CACHE_PREFIX = '@nn_v4_';
 const TTL_MENU = 30 * 60 * 1000;
 const TTL_NUTRITION = 24 * 60 * 60 * 1000;
-const SUPABASE_URL = 'https://drtuuuqtgihqvzcripec.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRydHV1dXF0Z2locXZ6Y3JpcGVjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU4NjAzNjksImV4cCI6MjA5MTQzNjM2OX0.ls4fI6gvxbEtiFxJhtzzYfFG6tf95Av4V5Z1flYNk-k';
 const REST_BASE = `${SUPABASE_URL}/rest/v1`;
-const SCRAPE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/netnutrition-scrape`;
+const FUNCTION_URL = 'https://drtuuuqtgihqvzcripec.supabase.co/functions/v1/netnutrition-scrape';
 
 export interface NNLocation {
   oid: number;
@@ -186,27 +185,54 @@ async function fetchDiningHalls(): Promise<SupabaseHall[]> {
   }
 
   const halls = (await response.json()) as SupabaseHall[];
+  console.log('Supabase data:', halls);
   return Array.isArray(halls) ? halls : [];
 }
 
 async function fetchFoodItems(): Promise<SupabaseFoodItem[]> {
-  const params = new URLSearchParams({
-    select:
-      'id,name,calories,protein,carbs,fat,saturated_fat,trans_fat,cholesterol,sodium,fiber,sugar,serving_size,serving,station_id,allergens,stations(id,name,dining_halls(id,name))',
-    order: 'name.asc',
-  });
+  const data = await getFoodItems();
+  return Array.isArray(data) ? (data as SupabaseFoodItem[]) : [];
+}
 
-  const response = await fetch(`${REST_BASE}/food_items?${params.toString()}`, {
-    method: 'GET',
-    headers: headers(),
-  });
+export async function getFoodItems() {
+  const { data, error } = await supabase
+    .from('food_items')
+    .select(`
+      *,
+      stations (
+        name,
+        dining_halls ( name )
+      )
+    `);
 
-  if (!response.ok) {
-    throw new Error(`Failed to fetch food items (${response.status})`);
+  console.log('Supabase data:', data);
+  console.log('Supabase error:', error);
+
+  if (error) {
+    console.error('Supabase error:', error);
+    throw error;
   }
 
-  const items = (await response.json()) as SupabaseFoodItem[];
-  return Array.isArray(items) ? items : [];
+  return data;
+}
+
+export async function triggerScrape() {
+  const res = await fetch(FUNCTION_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      apikey: SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error('Scrape failed:', text);
+    throw new Error('Scrape failed');
+  }
+
+  return await res.json();
 }
 
 function buildDataset(halls: SupabaseHall[], rows: SupabaseFoodItem[]): ParsedDataset {
@@ -315,16 +341,7 @@ async function getDataset(forceRefresh = false): Promise<ParsedDataset> {
 
 export const netNutritionService = {
   async refreshDataFromEdge(): Promise<void> {
-    const response = await fetch(SCRAPE_FUNCTION_URL, {
-      method: 'POST',
-      headers: headers(),
-      body: JSON.stringify({}),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Supabase scrape refresh failed (${response.status}): ${text.slice(0, 200)}`);
-    }
+    await triggerScrape();
   },
 
   async getLocations(): Promise<NNLocation[]> {
