@@ -6,7 +6,7 @@ import { spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useFavorites } from '@/hooks/useFavorites';
 import { useDailyLog } from '@/hooks/useDailyLog';
-import { mockMeals, Meal } from '@/services/mockData';
+import { Meal } from '@/services/types';
 import { useCustomMeals } from '@/hooks/useCustomMeals';
 import { MealCard } from '@/components/ui/MealCard';
 import { NutritionDetailsModal } from '@/components/feature/NutritionDetailsModal';
@@ -26,8 +26,7 @@ export default function FavoritesScreen() {
     id: cm.id, name: cm.name, location: 'Custom', category: 'Custom Meal',
     servingSize: cm.servingSize, nutrition: cm.nutrition,
   }));
-  const allMeals = [...mockMeals, ...customAsMeals];
-  const favoriteMeals = allMeals.filter(meal => isFavorite(meal.id));
+  const favoriteMeals = customAsMeals.filter(meal => isFavorite(meal.id));
 
   const handleMealPress = (meal: Meal) => {
     setSelectedMeal(meal);

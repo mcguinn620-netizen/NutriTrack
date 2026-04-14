@@ -1,62 +1,47 @@
-import React, { useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import { useRouter } from 'expo-router';
+import React from 'react';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { useDiningHalls } from '@/hooks/useNetNutrition';
+import { useStations } from '@/hooks/useNetNutrition';
 
-export default function DiningHallsScreen() {
+export default function StationsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { data: diningHalls, loading, error, refresh } = useDiningHalls();
-  const [refreshing, setRefreshing] = useState(false);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refresh();
-    setRefreshing(false);
-  };
+  const { hallId, hallName } = useLocalSearchParams<{ hallId: string; hallName?: string }>();
+  const { data: stations, loading, error } = useStations(hallId);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>Dining Halls</Text>
-        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Select a hall to view stations</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{hallName || 'Stations'}</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Select a station to view food items</Text>
       </View>
 
       {loading ? (
         <View style={styles.centerState}>
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.stateText, { color: colors.textSecondary }]}>Loading dining halls…</Text>
+          <Text style={[styles.stateText, { color: colors.textSecondary }]}>Loading stations…</Text>
         </View>
       ) : error ? (
         <View style={styles.centerState}>
           <Text style={[styles.errorText, { color: colors.error }]}>Error: {error}</Text>
         </View>
-      ) : diningHalls.length === 0 ? (
+      ) : stations.length === 0 ? (
         <View style={styles.centerState}>
           <Text style={[styles.stateText, { color: colors.textSecondary }]}>No data available</Text>
         </View>
       ) : (
         <FlatList
-          data={diningHalls}
+          data={stations}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           renderItem={({ item }) => (
             <Pressable
-              onPress={() => router.push(`/stations/${item.id}?hallName=${encodeURIComponent(item.name)}`)}
+              onPress={() => router.push(`/food-items/${item.id}?stationName=${encodeURIComponent(item.name)}`)}
               style={({ pressed }) => [
                 styles.card,
                 {
