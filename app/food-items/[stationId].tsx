@@ -1,11 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useFoodItems } from '@/hooks/useNetNutrition';
 import { FoodItem } from '@/services/netNutritionService';
+import ErrorView from '@/components/ErrorView';
+import { SkeletonList } from '@/components/LoadingSkeletons';
 
 function formatNutrientLabel(key: string) {
   return key
@@ -13,11 +15,21 @@ function formatNutrientLabel(key: string) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatLastUpdated(timestamp: number | null): string | null {
+  if (!timestamp) return null;
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export default function FoodItemsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { stationId, stationName } = useLocalSearchParams<{ stationId: string; stationName?: string }>();
-  const { data: items, loading, error } = useFoodItems(stationId);
+  const { data: items, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useFoodItems(stationId);
 
   const [selectedAllergens, setSelectedAllergens] = useState<string[]>([]);
   const [selectedFlags, setSelectedFlags] = useState<string[]>([]);
@@ -32,6 +44,7 @@ export default function FoodItemsScreen() {
   );
 
   const hasActiveFilters = selectedAllergens.length > 0 || selectedFlags.length > 0;
+  const lastUpdatedLabel = formatLastUpdated(lastUpdated);
 
   const filteredItems = useMemo(
     () =>
@@ -80,10 +93,39 @@ export default function FoodItemsScreen() {
     );
   };
 
+  const renderEmptyState = () => {
+    if (items.length === 0) {
+      return (
+        <View style={styles.centerState}>
+          <Text style={[styles.stateText, { color: colors.textSecondary }]}>No data available</Text>
+        </View>
+      );
+    }
+
+    if (hasActiveFilters && filteredItems.length === 0) {
+      return (
+        <View style={styles.centerState}>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No matching items</Text>
+          <Text style={[styles.stateText, { color: colors.textSecondary }]}>Try removing one or more filters.</Text>
+        </View>
+      );
+    }
+
+    return null;
+  };
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
       <View style={styles.header}>
         <Text style={[styles.title, { color: colors.text }]}>{stationName || 'Food Items'}</Text>
+        {lastUpdatedLabel ? (
+          <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
+        ) : null}
+        {isOfflineFallback ? (
+          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+            <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.filterRow}>
@@ -130,23 +172,17 @@ export default function FoodItemsScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.stateText, { color: colors.textSecondary }]}>Loading food items…</Text>
-        </View>
+        <SkeletonList count={5} type="food" />
       ) : error ? (
-        <View style={styles.centerState}>
-          <Text style={[styles.errorText, { color: colors.error }]}>Error: {error}</Text>
-        </View>
+        <ErrorView message={error} onRetry={refresh} />
       ) : filteredItems.length === 0 ? (
-        <View style={styles.centerState}>
-          <Text style={[styles.stateText, { color: colors.textSecondary }]}>No data available</Text>
-        </View>
+        renderEmptyState()
       ) : (
         <FlatList
           data={filteredItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={renderFoodItem}
         />
       )}
@@ -158,6 +194,15 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   title: { ...typography.h1 },
+  lastUpdated: { ...typography.bodySmall, marginTop: spacing.xs },
+  banner: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  bannerText: { ...typography.bodySmall },
   filterRow: { marginBottom: spacing.sm },
   filtersContainer: { paddingHorizontal: spacing.lg, gap: spacing.xs, paddingBottom: spacing.sm, paddingRight: spacing.xl },
   chip: { borderWidth: 1, borderRadius: borderRadius.full, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
@@ -180,6 +225,6 @@ const styles = StyleSheet.create({
   nutrientLabel: { ...typography.bodySmall, flex: 1 },
   nutrientValue: { ...typography.bodySmall, fontWeight: '600' },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
-  stateText: { ...typography.body },
-  errorText: { ...typography.body, textAlign: 'center' },
+  stateText: { ...typography.body, textAlign: 'center' },
+  emptyTitle: { ...typography.h3, marginBottom: spacing.xs, textAlign: 'center' },
 });

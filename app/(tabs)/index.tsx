@@ -1,36 +1,31 @@
-import React, { useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useDiningHalls } from '@/hooks/useNetNutrition';
+import ErrorView from '@/components/ErrorView';
+import { SkeletonList } from '@/components/LoadingSkeletons';
+
+function formatLastUpdated(timestamp: number | null): string | null {
+  if (!timestamp) return null;
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 export default function DiningHallsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { data: diningHalls, loading, error, refresh } = useDiningHalls();
-  const [refreshing, setRefreshing] = useState(false);
+  const { data: diningHalls, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useDiningHalls();
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try {
-      await refresh();
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
+  const lastUpdatedLabel = formatLastUpdated(lastUpdated);
   const isRefreshing = refreshing || loading;
 
   return (
@@ -38,8 +33,16 @@ export default function DiningHallsScreen() {
       <View style={styles.header}>
         <Text style={[styles.title, { color: colors.text }]}>Dining Halls</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Select a hall to view stations</Text>
+        {lastUpdatedLabel ? (
+          <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
+        ) : null}
+        {isOfflineFallback ? (
+          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+            <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
+          </View>
+        ) : null}
         <Pressable
-          onPress={onRefresh}
+          onPress={refresh}
           disabled={isRefreshing}
           style={({ pressed }) => [
             styles.refreshButton,
@@ -56,56 +59,19 @@ export default function DiningHallsScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.stateText, { color: colors.textSecondary }]}>Loading dining halls…</Text>
-        </View>
+        <SkeletonList count={6} type="hall" />
       ) : error ? (
-        <View style={styles.centerState}>
-          <Text style={[styles.errorText, { color: colors.error }]}>Error: {error}</Text>
-          <Pressable
-            onPress={onRefresh}
-            disabled={isRefreshing}
-            style={({ pressed }) => [
-              styles.refreshButton,
-              styles.centerRefreshButton,
-              {
-                backgroundColor: pressed ? colors.primaryDark ?? colors.primary : colors.primary,
-                opacity: isRefreshing ? 0.6 : 1,
-              },
-            ]}
-          >
-            <Text style={[styles.refreshButtonText, { color: '#ffffff' }]}>
-              {isRefreshing ? 'Refreshing...' : 'Refresh from Database'}
-            </Text>
-          </Pressable>
-        </View>
+        <ErrorView message={error} onRetry={refresh} />
       ) : diningHalls.length === 0 ? (
         <View style={styles.centerState}>
           <Text style={[styles.stateText, { color: colors.textSecondary }]}>No data available</Text>
-          <Pressable
-            onPress={onRefresh}
-            disabled={isRefreshing}
-            style={({ pressed }) => [
-              styles.refreshButton,
-              styles.centerRefreshButton,
-              {
-                backgroundColor: pressed ? colors.primaryDark ?? colors.primary : colors.primary,
-                opacity: isRefreshing ? 0.6 : 1,
-              },
-            ]}
-          >
-            <Text style={[styles.refreshButtonText, { color: '#ffffff' }]}>
-              {isRefreshing ? 'Refreshing...' : 'Refresh from Database'}
-            </Text>
-          </Pressable>
         </View>
       ) : (
         <FlatList
           data={diningHalls}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => router.push(`/stations/${item.id}?hallName=${encodeURIComponent(item.name)}`)}
@@ -132,6 +98,15 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   title: { ...typography.h1 },
   subtitle: { ...typography.body },
+  lastUpdated: { ...typography.bodySmall, marginTop: spacing.xs },
+  banner: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  bannerText: { ...typography.bodySmall },
   refreshButton: {
     marginTop: spacing.sm,
     paddingVertical: spacing.sm,
@@ -142,9 +117,6 @@ const styles = StyleSheet.create({
   refreshButtonText: {
     ...typography.body,
     fontWeight: '600',
-  },
-  centerRefreshButton: {
-    marginTop: spacing.md,
   },
   listContent: { padding: spacing.lg },
   card: {
@@ -159,5 +131,4 @@ const styles = StyleSheet.create({
   cardTitle: { ...typography.h3, flex: 1, marginRight: spacing.sm },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   stateText: { ...typography.body },
-  errorText: { ...typography.body, textAlign: 'center' },
 });

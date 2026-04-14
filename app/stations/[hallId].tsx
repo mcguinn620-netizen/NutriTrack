@@ -1,35 +1,52 @@
 import React from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useStations } from '@/hooks/useNetNutrition';
+import ErrorView from '@/components/ErrorView';
+import { SkeletonList } from '@/components/LoadingSkeletons';
+
+function formatLastUpdated(timestamp: number | null): string | null {
+  if (!timestamp) return null;
+  return new Date(timestamp).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 export default function StationsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { hallId, hallName } = useLocalSearchParams<{ hallId: string; hallName?: string }>();
-  const { data: stations, loading, error } = useStations(hallId);
+  const { data: stations, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useStations(hallId);
+
+  const lastUpdatedLabel = formatLastUpdated(lastUpdated);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}> 
       <View style={styles.header}>
         <Text style={[styles.title, { color: colors.text }]}>{hallName || 'Stations'}</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Select a station to view food items</Text>
+        {lastUpdatedLabel ? (
+          <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
+        ) : null}
+        {isOfflineFallback ? (
+          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+            <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
+          </View>
+        ) : null}
       </View>
 
       {loading ? (
-        <View style={styles.centerState}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.stateText, { color: colors.textSecondary }]}>Loading stations…</Text>
-        </View>
+        <SkeletonList count={6} type="station" />
       ) : error ? (
-        <View style={styles.centerState}>
-          <Text style={[styles.errorText, { color: colors.error }]}>Error: {error}</Text>
-        </View>
+        <ErrorView message={error} onRetry={refresh} />
       ) : stations.length === 0 ? (
         <View style={styles.centerState}>
           <Text style={[styles.stateText, { color: colors.textSecondary }]}>No data available</Text>
@@ -39,6 +56,7 @@ export default function StationsScreen() {
           data={stations}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
             <Pressable
               onPress={() => router.push(`/food-items/${item.id}?stationName=${encodeURIComponent(item.name)}`)}
@@ -65,6 +83,15 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md },
   title: { ...typography.h1 },
   subtitle: { ...typography.body },
+  lastUpdated: { ...typography.bodySmall, marginTop: spacing.xs },
+  banner: {
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderRadius: borderRadius.sm,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  bannerText: { ...typography.bodySmall },
   listContent: { padding: spacing.lg },
   card: {
     borderWidth: 1,
@@ -78,5 +105,4 @@ const styles = StyleSheet.create({
   cardTitle: { ...typography.h3, flex: 1, marginRight: spacing.sm },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   stateText: { ...typography.body },
-  errorText: { ...typography.body, textAlign: 'center' },
 });
