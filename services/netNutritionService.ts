@@ -1,7 +1,15 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/services/supabaseClient';
 
 const cache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 7 days
+const NUTRITION_CACHE_KEY_PREFIX = 'nutrition_cache:';
+const NUTRITION_KEY_PREFIXES = ['dining_halls', 'stations:', 'food_items:'];
+
+interface CachedPayload<T> {
+  data: T;
+  timestamp: number;
+}
 
 export interface DiningHall {
   id: string;
@@ -24,12 +32,15 @@ export interface FoodItem {
   nutrients: Record<string, unknown>;
 }
 
-function getCache<T>(key: string): T | null {
+function isExpired(timestamp: number): boolean {
+  return Date.now() - timestamp > CACHE_TTL;
+}
+
+function getMemoryCache<T>(key: string): T | null {
   const item = cache.get(key);
   if (!item) return null;
 
-  const isExpired = Date.now() - item.timestamp > CACHE_TTL;
-  if (isExpired) {
+  if (isExpired(item.timestamp)) {
     cache.delete(key);
     return null;
   }
@@ -37,11 +48,81 @@ function getCache<T>(key: string): T | null {
   return item.data as T;
 }
 
-function setCache<T>(key: string, data: T): void {
+function setMemoryCache<T>(key: string, data: T, timestamp = Date.now()): void {
   cache.set(key, {
     data,
-    timestamp: Date.now(),
+    timestamp,
   });
+}
+
+function getStorageKey(cacheKey: string): string {
+  return `${NUTRITION_CACHE_KEY_PREFIX}${cacheKey}`;
+}
+
+function shouldManageNutritionKey(cacheKey: string): boolean {
+  return NUTRITION_KEY_PREFIXES.some((prefix) => cacheKey.startsWith(prefix));
+}
+
+export async function loadCachedValue<T>(key: string): Promise<T | null> {
+  if (!shouldManageNutritionKey(key)) {
+    return null;
+  }
+
+  try {
+    const raw = await AsyncStorage.getItem(getStorageKey(key));
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as CachedPayload<T>;
+    if (!parsed || typeof parsed !== 'object' || !('timestamp' in parsed) || !('data' in parsed)) {
+      await AsyncStorage.removeItem(getStorageKey(key));
+      return null;
+    }
+
+    if (isExpired(parsed.timestamp)) {
+      cache.delete(key);
+      await AsyncStorage.removeItem(getStorageKey(key));
+      return null;
+    }
+
+    setMemoryCache(key, parsed.data, parsed.timestamp);
+    return parsed.data;
+  } catch (error) {
+    console.warn('[netNutritionService] Failed to load cache value:', { key, error });
+    return null;
+  }
+}
+
+export async function saveCachedValue<T>(key: string, data: T): Promise<void> {
+  if (!shouldManageNutritionKey(key)) {
+    return;
+  }
+
+  const payload: CachedPayload<T> = {
+    data,
+    timestamp: Date.now(),
+  };
+
+  setMemoryCache(key, data, payload.timestamp);
+
+  try {
+    await AsyncStorage.setItem(getStorageKey(key), JSON.stringify(payload));
+  } catch (error) {
+    console.warn('[netNutritionService] Failed to persist cache value:', { key, error });
+  }
+}
+
+export async function clearAllCachedNutritionData(): Promise<void> {
+  cache.clear();
+
+  try {
+    const keys = await AsyncStorage.getAllKeys();
+    const nutritionKeys = keys.filter((key) => key.startsWith(NUTRITION_CACHE_KEY_PREFIX));
+    if (nutritionKeys.length > 0) {
+      await AsyncStorage.multiRemove(nutritionKeys);
+    }
+  } catch (error) {
+    console.warn('[netNutritionService] Failed to clear cached nutrition data:', error);
+  }
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -91,8 +172,11 @@ function mapFoodItem(row: Record<string, unknown>): FoodItem {
 
 export async function getDiningHalls(): Promise<DiningHall[]> {
   const cacheKey = 'dining_halls';
-  const cached = getCache<DiningHall[]>(cacheKey);
-  if (cached) return cached;
+  const memoryCached = getMemoryCache<DiningHall[]>(cacheKey);
+  if (memoryCached) return memoryCached;
+
+  const storageCached = await loadCachedValue<DiningHall[]>(cacheKey);
+  if (storageCached) return storageCached;
 
   const { data, error } = await supabase
     .from('dining_halls')
@@ -109,14 +193,17 @@ export async function getDiningHalls(): Promise<DiningHall[]> {
     name: String(hall.name ?? 'Unknown Hall'),
   }));
 
-  setCache(cacheKey, halls);
+  await saveCachedValue(cacheKey, halls);
   return halls;
 }
 
 export async function getStationsByHall(hallId: string): Promise<Station[]> {
   const cacheKey = `stations:${hallId}`;
-  const cached = getCache<Station[]>(cacheKey);
-  if (cached) return cached;
+  const memoryCached = getMemoryCache<Station[]>(cacheKey);
+  if (memoryCached) return memoryCached;
+
+  const storageCached = await loadCachedValue<Station[]>(cacheKey);
+  if (storageCached) return storageCached;
 
   const { data, error } = await supabase
     .from('stations')
@@ -135,14 +222,17 @@ export async function getStationsByHall(hallId: string): Promise<Station[]> {
     name: String(station.name ?? 'Unknown Station'),
   }));
 
-  setCache(cacheKey, stations);
+  await saveCachedValue(cacheKey, stations);
   return stations;
 }
 
 export async function getFoodItemsByStation(stationId: string): Promise<FoodItem[]> {
   const cacheKey = `food_items:${stationId}`;
-  const cached = getCache<FoodItem[]>(cacheKey);
-  if (cached) return cached;
+  const memoryCached = getMemoryCache<FoodItem[]>(cacheKey);
+  if (memoryCached) return memoryCached;
+
+  const storageCached = await loadCachedValue<FoodItem[]>(cacheKey);
+  if (storageCached) return storageCached;
 
   const { data, error } = await supabase
     .from('food_items')
@@ -156,11 +246,11 @@ export async function getFoodItemsByStation(stationId: string): Promise<FoodItem
   }
 
   const mappedItems = (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
-  setCache(cacheKey, mappedItems);
+  await saveCachedValue(cacheKey, mappedItems);
   return mappedItems;
 }
 
 export async function refreshFromDatabase(): Promise<boolean> {
-  cache.clear();
+  await clearAllCachedNutritionData();
   return true;
 }
