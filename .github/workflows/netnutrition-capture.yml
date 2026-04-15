@@ -1,1 +1,37 @@
-file
+name: NetNutrition Capture
+
+on:
+  workflow_dispatch:  # manual trigger
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run capture script
+        run: npm run capture:netnutrition
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: netnutrition-capture
+          path: |
+            artifacts/**
+            output/**
+            logs/**
+            **/*.json
+            **/*.html
