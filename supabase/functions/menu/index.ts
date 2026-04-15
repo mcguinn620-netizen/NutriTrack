@@ -56,6 +56,7 @@ const parseNumeric = (v?: string | null) => (v ? Number(v.replace(/,/g, '').matc
 function isStartupError(text: string): boolean {
   return text.includes('NetNutrition Start-up Error') || text.includes('ANA_border');
 }
+const shortHtmlSnippet = (html: string) => stripText(html).slice(0, 320);
 
 function parseHtmlDocument(html: string) { const doc = new DOMParser().parseFromString(html, 'text/html'); if (!doc) throw new Error('HTML parse failed'); return doc; }
 function extractHiddenFields(html: string): HiddenFields {
@@ -275,9 +276,35 @@ function parseNutritionLabel(html: string) {
 
 class NetNutritionClient {
   private cookieJar = new Map<string, string>(); private hiddenFields: HiddenFields | null = null;
+  private lastBootstrapDebug: {
+    finalUrl: string;
+    responseStatus: number | null;
+    cookieNames: string[];
+    htmlFirst1500: string;
+    containsViewstate: boolean;
+    containsSideBarSelectUnit: boolean;
+    containsStartupError: boolean;
+    containsContinue: boolean;
+  } | null = null;
 
   private ensureExternalCookie() {
     if (!this.cookieJar.has('CBORD.netnutrition2')) this.cookieJar.set('CBORD.netnutrition2', 'NNexternalID=1');
+  }
+  private captureBootstrapDebug(finalUrl: string, responseStatus: number | null, html: string) {
+    this.lastBootstrapDebug = {
+      finalUrl,
+      responseStatus,
+      cookieNames: Array.from(this.cookieJar.keys()),
+      htmlFirst1500: html.slice(0, 1500),
+      containsViewstate: html.includes('__VIEWSTATE'),
+      containsSideBarSelectUnit: html.includes('sideBarSelectUnit'),
+      containsStartupError: html.includes('NetNutrition Start-up Error'),
+      containsContinue: html.includes('Continue'),
+    };
+  }
+  private logBootstrapDebug(reason: string) {
+    if (!this.lastBootstrapDebug) return;
+    console.error(reason, this.lastBootstrapDebug);
   }
 
   private async initSession(): Promise<string> {
@@ -315,25 +342,24 @@ class NetNutritionClient {
       });
       parseSetCookie(res.headers, this.cookieJar);
       this.ensureExternalCookie();
-
-      if (!res.ok) throw new Error(`GET homepage failed: ${res.status}`);
       const html = await res.text();
+      this.captureBootstrapDebug(finalUrl, res.status, html);
+
+      if (!res.ok) {
+        this.logBootstrapDebug('Homepage bootstrap HTTP error');
+        throw new Error(`GET homepage failed: ${res.status}. HTML snippet: ${shortHtmlSnippet(html)}`);
+      }
       if (isStartupError(html)) {
         if (attempt === 0) continue;
-        console.error('Startup bootstrap debug', {
-          finalUrl,
-          cookieNames: Array.from(this.cookieJar.keys()),
-          htmlSnippet: html.slice(0, 1000),
-          containsViewstate: html.includes('__VIEWSTATE'),
-          containsNetNutrition: html.includes('NetNutrition'),
-          containsStartupError: html.includes('Start-up Error'),
-        });
-        throw new Error('Startup error on homepage bootstrap');
+        this.logBootstrapDebug('Startup bootstrap debug');
+        throw new Error(`Startup error on homepage bootstrap. HTML snippet: ${shortHtmlSnippet(html)}`);
       }
       this.hiddenFields = extractHiddenFields(html);
       return html;
     }
-    throw new Error('GET homepage failed during bootstrap');
+    this.logBootstrapDebug('Homepage bootstrap exhausted retries');
+    const snippet = this.lastBootstrapDebug ? shortHtmlSnippet(this.lastBootstrapDebug.htmlFirst1500) : '';
+    throw new Error(`GET homepage failed during bootstrap. HTML snippet: ${snippet}`);
   }
 
   async getHomepage() {
@@ -346,6 +372,9 @@ class NetNutritionClient {
         lastErr = e;
         if (i < RETRIES) await new Promise((r) => setTimeout(r, i * 200));
       }
+    }
+    if (String(lastErr).includes('bootstrap') || String(lastErr).includes('Startup error')) {
+      this.logBootstrapDebug('getHomepage bootstrap failure after retries');
     }
     throw new Error(`Failed to initialize NetNutrition session: ${String(lastErr)}`);
   }
