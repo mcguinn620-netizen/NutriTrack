@@ -12,6 +12,10 @@ interface TrayTotals {
   protein: number;
   carbs: number;
   fat: number;
+  hasCalories: boolean;
+  hasProtein: boolean;
+  hasCarbs: boolean;
+  hasFat: boolean;
 }
 
 interface TrayContextValue {
@@ -36,17 +40,15 @@ function toNumber(value: unknown): number {
   return 0;
 }
 
-function getMetric(item: FoodItem, keys: string[]): number {
+function getMetric(item: FoodItem, keys: string[]): { value: number; found: boolean } {
   const nutrients = item.nutrients ?? {};
   for (const [key, value] of Object.entries(nutrients)) {
     if (keys.includes(key.toLowerCase())) {
       const parsed = toNumber(value);
-      if (parsed > 0) {
-        return parsed;
-      }
+      return { value: parsed, found: true };
     }
   }
-  return 0;
+  return { value: 0, found: false };
 }
 
 export function TrayProvider({ children }: { children: ReactNode }) {
@@ -81,13 +83,32 @@ export function TrayProvider({ children }: { children: ReactNode }) {
       (acc, entry) => {
         const quantity = entry.quantity;
         acc.itemCount += quantity;
-        acc.calories += getMetric(entry.item, ['calories']);
-        acc.protein += getMetric(entry.item, ['protein']);
-        acc.carbs += getMetric(entry.item, ['carbs', 'carbohydrates']);
-        acc.fat += getMetric(entry.item, ['fat', 'total fat']);
+        const calories = getMetric(entry.item, ['calories']);
+        const protein = getMetric(entry.item, ['protein']);
+        const carbs = getMetric(entry.item, ['carbs', 'carbohydrates']);
+        const fat = getMetric(entry.item, ['fat', 'total fat']);
+
+        acc.calories += calories.value * quantity;
+        acc.protein += protein.value * quantity;
+        acc.carbs += carbs.value * quantity;
+        acc.fat += fat.value * quantity;
+        acc.hasCalories = acc.hasCalories || calories.found;
+        acc.hasProtein = acc.hasProtein || protein.found;
+        acc.hasCarbs = acc.hasCarbs || carbs.found;
+        acc.hasFat = acc.hasFat || fat.found;
         return acc;
       },
-      { itemCount: 0, calories: 0, protein: 0, carbs: 0, fat: 0 },
+      {
+        itemCount: 0,
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+        hasCalories: false,
+        hasProtein: false,
+        hasCarbs: false,
+        hasFat: false,
+      },
     );
   }, [entries]);
 

@@ -8,6 +8,11 @@ function SkeletonLine({ width, height = 10 }: { width: string | number; height?:
   return <View style={[styles.line, { width, height, backgroundColor: colors.surfaceHover }]} />;
 }
 
+function SkeletonCircle({ size }: { size: number }) {
+  const { colors } = useTheme();
+  return <View style={[styles.circle, { width: size, height: size, backgroundColor: colors.surfaceHover }]} />;
+}
+
 function SkeletonCard({ children, minHeight }: { children?: React.ReactNode; minHeight?: number }) {
   const { colors } = useTheme();
 
@@ -17,7 +22,10 @@ function SkeletonCard({ children, minHeight }: { children?: React.ReactNode; min
 export function DiningHallRowSkeleton() {
   return (
     <SkeletonCard minHeight={118}>
-      <SkeletonLine width="42%" height={12} />
+      <View style={styles.headerRow}>
+        <SkeletonCircle size={34} />
+        <SkeletonLine width="42%" height={12} />
+      </View>
       <SkeletonLine width="70%" />
       <View style={styles.metaRow}>
         <SkeletonLine width={90} />
@@ -30,7 +38,10 @@ export function DiningHallRowSkeleton() {
 export function StationRowSkeleton() {
   return (
     <SkeletonCard minHeight={108}>
-      <SkeletonLine width="58%" height={12} />
+      <View style={styles.headerRow}>
+        <SkeletonCircle size={34} />
+        <SkeletonLine width="58%" height={12} />
+      </View>
       <SkeletonLine width="48%" />
       <View style={styles.metaRow}>
         <SkeletonLine width={100} />
@@ -43,7 +54,10 @@ export function StationRowSkeleton() {
 export function FoodItemCardSkeleton() {
   return (
     <SkeletonCard minHeight={210}>
-      <SkeletonLine width="70%" height={12} />
+      <View style={styles.headerRow}>
+        <SkeletonLine width="70%" height={12} />
+        <SkeletonCircle size={30} />
+      </View>
       <SkeletonLine width="44%" />
       <View style={styles.metaRow}>
         <SkeletonLine width={58} height={36} />
@@ -95,6 +109,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.xs,
     flexWrap: 'wrap',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  circle: {
+    borderRadius: 999,
   },
   chipsRow: {
     flexDirection: 'row',

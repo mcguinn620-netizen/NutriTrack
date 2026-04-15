@@ -31,7 +31,9 @@ export default function TrayBar({ onOpen }: TrayBarProps) {
           <Text style={styles.buttonTitle}>Tray · {totals.itemCount} items</Text>
         </View>
         <Text style={styles.buttonMeta}>
-          {Math.round(totals.calories)} cal · P {Math.round(totals.protein)} C {Math.round(totals.carbs)} F {Math.round(totals.fat)}
+          {totals.hasCalories ? `${Math.round(totals.calories)} cal` : 'Calories —'} · P{' '}
+          {totals.hasProtein ? Math.round(totals.protein) : '—'} C {totals.hasCarbs ? Math.round(totals.carbs) : '—'} F{' '}
+          {totals.hasFat ? Math.round(totals.fat) : '—'}
         </Text>
       </Pressable>
     </View>

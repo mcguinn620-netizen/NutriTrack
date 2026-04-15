@@ -25,7 +25,9 @@ export default function TraySheet({ visible, onClose }: TraySheetProps) {
             <Pressable onPress={onClose} hitSlop={10}><MaterialIcons name="close" size={22} color={colors.text} /></Pressable>
           </View>
           <Text style={[styles.summary, { color: colors.textSecondary }]}>
-            {totals.itemCount} items · {Math.round(totals.calories)} cal · P {Math.round(totals.protein)} C {Math.round(totals.carbs)} F {Math.round(totals.fat)}
+            {totals.itemCount} items · {totals.hasCalories ? `${Math.round(totals.calories)} cal` : 'Calories —'} · P{' '}
+            {totals.hasProtein ? Math.round(totals.protein) : '—'} C {totals.hasCarbs ? Math.round(totals.carbs) : '—'} F{' '}
+            {totals.hasFat ? Math.round(totals.fat) : '—'}
           </Text>
 
           <ScrollView contentContainerStyle={styles.list}>
