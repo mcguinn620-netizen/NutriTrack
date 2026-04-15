@@ -5,7 +5,7 @@ import { corsHeaders } from '../_shared/cors.ts';
 const NETNUTRITION_ROOT = 'http://netnutrition.bsu.edu';
 const NETNUTRITION_BASE = `${NETNUTRITION_ROOT}/NetNutrition/1`;
 const USER_AGENT =
-  'Mozilla/5.0 (compatible; NetNutrition-Supabase-Edge/1.0; +https://supabase.com)';
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const RETRIES = 3;
 
@@ -60,9 +60,28 @@ function isStartupError(text: string): boolean {
 function parseHtmlDocument(html: string) { const doc = new DOMParser().parseFromString(html, 'text/html'); if (!doc) throw new Error('HTML parse failed'); return doc; }
 function extractHiddenFields(html: string): HiddenFields {
   const doc = parseHtmlDocument(html);
-  const __VIEWSTATE = (doc.querySelector('input[name="__VIEWSTATE"]') as any)?.getAttribute('value') ?? '';
-  const __EVENTVALIDATION = (doc.querySelector('input[name="__EVENTVALIDATION"]') as any)?.getAttribute('value') ?? '';
-  const __VIEWSTATEGENERATOR = (doc.querySelector('input[name="__VIEWSTATEGENERATOR"]') as any)?.getAttribute('value') ?? undefined;
+  let __VIEWSTATE = (doc.querySelector('input[name="__VIEWSTATE"]') as any)?.getAttribute('value')
+    ?? (doc.querySelector('input[id="__VIEWSTATE"]') as any)?.getAttribute('value')
+    ?? '';
+  let __EVENTVALIDATION = (doc.querySelector('input[name="__EVENTVALIDATION"]') as any)?.getAttribute('value')
+    ?? (doc.querySelector('input[id="__EVENTVALIDATION"]') as any)?.getAttribute('value')
+    ?? '';
+  const __VIEWSTATEGENERATOR = (doc.querySelector('input[name="__VIEWSTATEGENERATOR"]') as any)?.getAttribute('value')
+    ?? (doc.querySelector('input[id="__VIEWSTATEGENERATOR"]') as any)?.getAttribute('value')
+    ?? undefined;
+
+  if (!__VIEWSTATE) {
+    const viewstateMatch = html.match(/id="__VIEWSTATE" value="([^"]+)"/i)
+      ?? html.match(/name="__VIEWSTATE" value="([^"]+)"/i);
+    __VIEWSTATE = viewstateMatch?.[1] ?? '';
+  }
+
+  if (!__EVENTVALIDATION) {
+    const eventValidationMatch = html.match(/id="__EVENTVALIDATION" value="([^"]+)"/i)
+      ?? html.match(/name="__EVENTVALIDATION" value="([^"]+)"/i);
+    __EVENTVALIDATION = eventValidationMatch?.[1] ?? '';
+  }
+
   if (!__VIEWSTATE || !__EVENTVALIDATION) throw new Error('Missing ASP.NET hidden fields');
   return { __VIEWSTATE, __EVENTVALIDATION, __VIEWSTATEGENERATOR };
 }
@@ -262,13 +281,13 @@ class NetNutritionClient {
   }
 
   private async initSession(): Promise<string> {
-    this.ensureExternalCookie();
-    let current = `${NETNUTRITION_BASE}#`;
-    for (let i = 0; i < 8; i++) {
+    this.cookieJar.clear();
+    let current = NETNUTRITION_BASE;
+    for (let i = 0; i < 5; i++) {
       const res = await fetch(current, {
         headers: {
           'user-agent': USER_AGENT,
-          accept: 'text/html,application/xhtml+xml',
+          accept: 'text/html',
           cookie: cookieHeader(this.cookieJar),
         },
         redirect: 'manual',
@@ -281,14 +300,40 @@ class NetNutritionClient {
         current = new URL(location, current).toString();
         continue;
       }
+      break;
+    }
+    this.ensureExternalCookie();
+
+    const finalUrl = `${NETNUTRITION_BASE}#`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(finalUrl, {
+        headers: {
+          'user-agent': USER_AGENT,
+          accept: 'text/html',
+          cookie: cookieHeader(this.cookieJar),
+        },
+      });
+      parseSetCookie(res.headers, this.cookieJar);
+      this.ensureExternalCookie();
 
       if (!res.ok) throw new Error(`GET homepage failed: ${res.status}`);
       const html = await res.text();
-      if (isStartupError(html)) throw new Error('Startup error on homepage bootstrap');
+      if (isStartupError(html)) {
+        if (attempt === 0) continue;
+        console.error('Startup bootstrap debug', {
+          finalUrl,
+          cookieNames: Array.from(this.cookieJar.keys()),
+          htmlSnippet: html.slice(0, 1000),
+          containsViewstate: html.includes('__VIEWSTATE'),
+          containsNetNutrition: html.includes('NetNutrition'),
+          containsStartupError: html.includes('Start-up Error'),
+        });
+        throw new Error('Startup error on homepage bootstrap');
+      }
       this.hiddenFields = extractHiddenFields(html);
       return html;
     }
-    throw new Error('GET homepage failed: too many redirects');
+    throw new Error('GET homepage failed during bootstrap');
   }
 
   async getHomepage() {
