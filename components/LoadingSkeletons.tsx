@@ -1,9 +1,10 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
+import type { DimensionValue } from 'react-native';
 import { borderRadius, spacing } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 
-function SkeletonLine({ width, height = 10 }: { width: string | number; height?: number }) {
+function SkeletonLine({ width, height = 10 }: { width: DimensionValue; height?: number }) {
   const { colors } = useTheme();
   return <View style={[styles.line, { width, height, backgroundColor: colors.surfaceHover }]} />;
 }

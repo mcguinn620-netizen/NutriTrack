@@ -114,6 +114,78 @@ function parseItems(html: string) {
   return out;
 }
 
+interface ParsedStationItem {
+  id: string;
+  name: string;
+  servingSize: string | null;
+  detailOid: string | null;
+}
+
+interface ParsedStationCategory {
+  name: string;
+  items: ParsedStationItem[];
+}
+
+const detailOidFromRow = (rowHtml: string): string | null => {
+  const match = rowHtml.match(
+    /(?:ShowItemNutritionLabel\(|menuDetailGridCb\(\s*this,\s*|detailOid["'\s:=]+|id=["']cbm)(\d+)/i,
+  );
+  return match?.[1] ?? null;
+};
+
+function parseStationCategoriesFromItemPanel(html: string): ParsedStationCategory[] {
+  const doc = parseHtmlDocument(html);
+  const itemPanel = doc.querySelector('#itemPanel') ?? doc;
+  const table = itemPanel.querySelector('.cbo_nn_itemGridTable');
+  if (!table) return [];
+
+  const categories: ParsedStationCategory[] = [];
+  let currentCategory: ParsedStationCategory | null = null;
+  const seenItems = new Set<string>();
+
+  for (const row of Array.from(table.querySelectorAll('tr'))) {
+    const groupCell = row.querySelector('td.cbo_nn_itemGroupRow');
+    if (groupCell) {
+      const groupName = stripText(groupCell.textContent);
+      if (!groupName) continue;
+      currentCategory = { name: groupName, items: [] };
+      categories.push(currentCategory);
+      continue;
+    }
+
+    const nameEl = row.querySelector('.cbo_nn_itemPrimaryName')
+      ?? row.querySelector('[class*="itemPrimaryName"]')
+      ?? row.querySelector('a');
+    const itemName = stripText(nameEl?.textContent);
+    if (!itemName) continue;
+
+    const detailOid = detailOidFromRow(row.outerHTML);
+    const itemId = detailOid ?? `${itemName.toLowerCase()}_${seenItems.size}`;
+    if (seenItems.has(itemId)) continue;
+    seenItems.add(itemId);
+
+    const servingSize = stripText(
+      row.querySelector('.cbo_nn_itemServingSize')?.textContent
+        ?? row.querySelector('[class*="itemServing"]')?.textContent
+        ?? null,
+    ) || null;
+
+    if (!currentCategory) {
+      currentCategory = { name: 'All Items', items: [] };
+      categories.push(currentCategory);
+    }
+
+    currentCategory.items.push({
+      id: itemId,
+      name: itemName,
+      servingSize,
+      detailOid,
+    });
+  }
+
+  return categories.filter((c) => c.items.length > 0);
+}
+
 function parsePanelResponse(text: string): { panelType: 'childUnitsPanel' | 'menuPanel' | 'itemPanel' | 'unknown'; html: string; mergedHtml: string } {
   const trimmed = text.trim(); if (!trimmed) return { panelType: 'unknown', html: '', mergedHtml: '' };
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
@@ -225,12 +297,42 @@ async function scrapeAllHalls(): Promise<ScrapeHall[]> {
         categories.push(category);
       }
     } else if (state.panelType === 'itemPanel') {
-      const category: ScrapeCategory = { id: `menu_${unit.id}_default`, hallId: unit.id, name: 'All Items', items: [] };
-      for (const item of parseItems(state.html || state.mergedHtml)) {
-        const nutrition = await client.nutritionForItem(item.id);
-        category.items.push({ id: `item_${item.id}`, name: item.name, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, rawLabel: nutrition.raw });
+      const stationCategories = parseStationCategoriesFromItemPanel(state.html || state.mergedHtml);
+      if (stationCategories.length) {
+        for (const [index, stationCategory] of stationCategories.entries()) {
+          const category: ScrapeCategory = {
+            id: `menu_${unit.id}_${index + 1}`,
+            hallId: unit.id,
+            name: stationCategory.name,
+            items: [],
+          };
+          for (const item of stationCategory.items) {
+            if (!item.detailOid) continue;
+            const nutrition = await client.nutritionForItem(item.detailOid);
+            category.items.push({
+              id: `item_${item.id}`,
+              name: item.name,
+              calories: nutrition.calories,
+              protein: nutrition.protein,
+              carbs: nutrition.carbs,
+              fat: nutrition.fat,
+              rawLabel: {
+                ...nutrition.raw,
+                serving_size: item.servingSize,
+                detail_oid: item.detailOid,
+              },
+            });
+          }
+          if (category.items.length) categories.push(category);
+        }
+      } else {
+        const category: ScrapeCategory = { id: `menu_${unit.id}_default`, hallId: unit.id, name: 'All Items', items: [] };
+        for (const item of parseItems(state.html || state.mergedHtml)) {
+          const nutrition = await client.nutritionForItem(item.id);
+          category.items.push({ id: `item_${item.id}`, name: item.name, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, rawLabel: nutrition.raw });
+        }
+        categories.push(category);
       }
-      categories.push(category);
     } else {
       throw new Error(`Could not reach menuPanel/itemPanel for ${unit.name}`);
     }
