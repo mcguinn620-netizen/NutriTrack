@@ -3,33 +3,74 @@ import { StyleSheet, View } from 'react-native';
 import { borderRadius, spacing } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 
-function SkeletonBlock({ height }: { height: number }) {
+function SkeletonLine({ width, height = 10 }: { width: string | number; height?: number }) {
+  const { colors } = useTheme();
+  return <View style={[styles.line, { width, height, backgroundColor: colors.surfaceHover }]} />;
+}
+
+function SkeletonCircle({ size }: { size: number }) {
+  const { colors } = useTheme();
+  return <View style={[styles.circle, { width: size, height: size, backgroundColor: colors.surfaceHover }]} />;
+}
+
+function SkeletonCard({ children, minHeight }: { children?: React.ReactNode; minHeight?: number }) {
   const { colors } = useTheme();
 
-  return (
-    <View
-      style={[
-        styles.block,
-        {
-          height,
-          backgroundColor: colors.surfaceHover,
-          borderColor: colors.border,
-        },
-      ]}
-    />
-  );
+  return <View style={[styles.card, { borderColor: colors.border, minHeight }]}>{children}</View>;
 }
 
 export function DiningHallRowSkeleton() {
-  return <SkeletonBlock height={68} />;
+  return (
+    <SkeletonCard minHeight={118}>
+      <View style={styles.headerRow}>
+        <SkeletonCircle size={34} />
+        <SkeletonLine width="42%" height={12} />
+      </View>
+      <SkeletonLine width="70%" />
+      <View style={styles.metaRow}>
+        <SkeletonLine width={90} />
+        <SkeletonLine width={120} />
+      </View>
+    </SkeletonCard>
+  );
 }
 
 export function StationRowSkeleton() {
-  return <SkeletonBlock height={68} />;
+  return (
+    <SkeletonCard minHeight={108}>
+      <View style={styles.headerRow}>
+        <SkeletonCircle size={34} />
+        <SkeletonLine width="58%" height={12} />
+      </View>
+      <SkeletonLine width="48%" />
+      <View style={styles.metaRow}>
+        <SkeletonLine width={100} />
+        <SkeletonLine width={70} />
+      </View>
+    </SkeletonCard>
+  );
 }
 
 export function FoodItemCardSkeleton() {
-  return <SkeletonBlock height={154} />;
+  return (
+    <SkeletonCard minHeight={210}>
+      <View style={styles.headerRow}>
+        <SkeletonLine width="70%" height={12} />
+        <SkeletonCircle size={30} />
+      </View>
+      <SkeletonLine width="44%" />
+      <View style={styles.metaRow}>
+        <SkeletonLine width={58} height={36} />
+        <SkeletonLine width={58} height={36} />
+        <SkeletonLine width={58} height={36} />
+      </View>
+      <View style={styles.chipsRow}>
+        <SkeletonLine width={74} height={22} />
+        <SkeletonLine width={82} height={22} />
+      </View>
+      <SkeletonLine width="32%" />
+    </SkeletonCard>
+  );
 }
 
 export function SkeletonList({ count, type }: { count: number; type: 'hall' | 'station' | 'food' }) {
@@ -54,9 +95,32 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.sm,
   },
-  block: {
+  card: {
     borderWidth: 1,
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    gap: spacing.sm,
     width: '100%',
+  },
+  line: {
+    borderRadius: borderRadius.sm,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    flexWrap: 'wrap',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  circle: {
+    borderRadius: 999,
+  },
+  chipsRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
   },
 });

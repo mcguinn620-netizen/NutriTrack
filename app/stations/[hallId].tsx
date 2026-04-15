@@ -8,6 +8,8 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useStations } from '@/hooks/useNetNutrition';
 import ErrorView from '@/components/ErrorView';
 import { SkeletonList } from '@/components/LoadingSkeletons';
+import CardSurface from '@/components/ui/CardSurface';
+import { MetaRow } from '@/components/ui/primitives';
 
 function formatLastUpdated(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -38,7 +40,7 @@ export default function StationsScreen() {
           <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
         ) : null}
         {isOfflineFallback ? (
-          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}>
+          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}> 
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
           </View>
         ) : null}
@@ -72,19 +74,20 @@ export default function StationsScreen() {
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
-            <Pressable
+            <CardSurface
+              style={styles.card}
               onPress={() => router.push(`/food-items/${item.id}?stationName=${encodeURIComponent(item.name)}`)}
-              style={({ pressed }) => [
-                styles.card,
-                {
-                  backgroundColor: pressed ? colors.surfaceHover : colors.surface,
-                  borderColor: colors.border,
-                },
-              ]}
             >
+              <View style={styles.cardHeader}>
+                <View style={[styles.iconBadge, { backgroundColor: colors.surfaceHover }]}>
+                  <MaterialIcons name="ramen-dining" size={18} color={colors.primary} />
+                </View>
+                <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />
+              </View>
               <Text style={[styles.cardTitle, { color: colors.text }]}>{item.name}</Text>
-              <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />
-            </Pressable>
+              <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>Browse available food items</Text>
+              <MetaRow icon="touch-app" text="Tap to open station menu" />
+            </CardSurface>
           )}
         />
       )}
@@ -113,22 +116,13 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.sm,
     alignSelf: 'flex-start',
   },
-  refreshButtonText: {
-    ...typography.body,
-    fontWeight: '600',
-    color: '#ffffff',
-  },
-  listContent: { padding: spacing.lg },
-  card: {
-    borderWidth: 1,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardTitle: { ...typography.h3, flex: 1, marginRight: spacing.sm },
+  refreshButtonText: { ...typography.bodySmall, color: '#ffffff', fontWeight: '700' },
+  listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg },
+  card: { marginBottom: spacing.sm },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  iconBadge: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
+  cardTitle: { ...typography.h3 },
+  cardSubtitle: { ...typography.bodySmall, marginTop: 2 },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   stateText: { ...typography.body },
 });
