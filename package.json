@@ -10,7 +10,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
-    "typecheck:functions": "deno check supabase/functions/**/*.ts"
+    "typecheck:functions": "deno check supabase/functions/**/*.ts",
+    "capture:netnutrition": "node scripts/netnutrition-capture-playwright.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",
@@ -30,6 +31,7 @@
     "@types/react": "^19.0.12",
     "eslint": "^9.25.1",
     "eslint-config-expo": "~9.2.0",
-    "typescript": "~5.8.3"
+    "typescript": "~5.8.3",
+    "playwright": "^1.53.0"
   }
 }
