@@ -1,5 +1,5 @@
 # 1) Discard only the lockfile local modification
-git restore pnpm-lock.yaml
+git restore npm-lock.yaml
 
 # 2) Verify nothing is dirty
 git status
