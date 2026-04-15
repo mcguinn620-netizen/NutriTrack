@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
+import CardSurface from '@/components/ui/CardSurface';
 
 interface FilterPanelProps {
   open: boolean;
@@ -14,6 +15,7 @@ interface FilterPanelProps {
   onToggleAllergen: (value: string) => void;
   onToggleFlag: (value: string) => void;
   onClear: () => void;
+  onRemoveActiveFilter: (type: 'allergen' | 'flag', value: string) => void;
 }
 
 function compactFilterLabel(base: string, count: number): string {
@@ -30,6 +32,7 @@ export default function FilterPanel({
   onToggleAllergen,
   onToggleFlag,
   onClear,
+  onRemoveActiveFilter,
 }: FilterPanelProps) {
   const { colors } = useTheme();
   const activeCount = selectedAllergens.length + selectedFlags.length;
@@ -62,13 +65,38 @@ export default function FilterPanel({
           <MaterialIcons name={open ? 'expand-less' : 'expand-more'} size={18} color={colors.textSecondary} />
         </Pressable>
 
-        <Pressable onPress={onClear} style={[styles.clearButton, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+        <Pressable onPress={onClear} style={[styles.clearButton, { borderColor: colors.border, backgroundColor: colors.surface }]}> 
           <Text style={[styles.clearButtonText, { color: activeCount > 0 ? colors.primary : colors.textSecondary }]}>Clear</Text>
         </Pressable>
       </View>
 
+      {activeCount > 0 ? (
+        <View style={styles.activeChipsRow}>
+          {selectedAllergens.map((value) => (
+            <Pressable
+              key={`active-a-${value}`}
+              onPress={() => onRemoveActiveFilter('allergen', value)}
+              style={[styles.activeChip, { borderColor: colors.border, backgroundColor: colors.surfaceHover }]}
+            >
+              <Text style={[styles.activeChipText, { color: colors.textSecondary }]} numberOfLines={1}>Allergen: {value}</Text>
+              <MaterialIcons name="close" size={14} color={colors.textLight} />
+            </Pressable>
+          ))}
+          {selectedFlags.map((value) => (
+            <Pressable
+              key={`active-f-${value}`}
+              onPress={() => onRemoveActiveFilter('flag', value)}
+              style={[styles.activeChip, { borderColor: colors.border, backgroundColor: colors.surfaceHover }]}
+            >
+              <Text style={[styles.activeChipText, { color: colors.textSecondary }]} numberOfLines={1}>Flag: {value}</Text>
+              <MaterialIcons name="close" size={14} color={colors.textLight} />
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+
       {open ? (
-        <View style={[styles.panel, { borderColor: colors.border, backgroundColor: colors.surface }]}> 
+        <CardSurface style={styles.panel}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Allergens</Text>
           <View style={styles.wrapRow}>
             {allergenOptions.length === 0 ? (
@@ -86,7 +114,7 @@ export default function FilterPanel({
               flagOptions.map((value) => renderToggle(value, selectedFlags.includes(value), () => onToggleFlag(value)))
             )}
           </View>
-        </View>
+        </CardSurface>
       ) : null}
     </View>
   );
@@ -127,21 +155,31 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     fontWeight: '600',
   },
+  activeChipsRow: { marginTop: spacing.sm, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  activeChip: {
+    borderWidth: 1,
+    borderRadius: borderRadius.full,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    maxWidth: '100%',
+  },
+  activeChipText: { ...typography.caption, fontWeight: '600', maxWidth: 210 },
   panel: {
     marginTop: spacing.sm,
-    borderWidth: 1,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    gap: spacing.sm,
   },
   sectionTitle: {
     ...typography.body,
     fontWeight: '600',
+    marginBottom: spacing.xs,
   },
   wrapRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.xs,
+    marginBottom: spacing.sm,
   },
   filterPill: {
     borderWidth: 1,

@@ -1,17 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useFoodItems } from '@/hooks/useNetNutrition';
 import { FoodItem } from '@/services/netNutritionService';
 import { getFavoriteFoodItemIds, toggleFavoriteFoodItem } from '@/services/favoritesService';
-import { recordRecentFoodItem } from '@/services/recentItemsService';
+import { getRecentFoodItemEntries, recordRecentFoodItem } from '@/services/recentItemsService';
 import ErrorView from '@/components/ErrorView';
 import { SkeletonList } from '@/components/LoadingSkeletons';
 import FoodItemCard from '@/components/FoodItemCard';
 import FilterPanel from '@/components/FilterPanel';
+import RecentItemsSection from '@/components/RecentItemsSection';
+import TrayBar from '@/components/tray/TrayBar';
+import TraySheet from '@/components/tray/TraySheet';
+import { TrayProvider, useTray } from '@/components/tray/TrayContext';
 
 function formatLastUpdated(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -23,9 +27,11 @@ function formatLastUpdated(timestamp: number | null): string | null {
   });
 }
 
-export default function FoodItemsScreen() {
+function FoodItemsContent() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { addItem, removeItem, hasItem } = useTray();
   const { stationId, stationName } = useLocalSearchParams<{ stationId: string; stationName?: string }>();
   const { data: items, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useFoodItems(stationId);
 
@@ -33,13 +39,16 @@ export default function FoodItemsScreen() {
   const [selectedFlags, setSelectedFlags] = useState<string[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [trayOpen, setTrayOpen] = useState(false);
+  const [recentItems, setRecentItems] = useState<Awaited<ReturnType<typeof getRecentFoodItemEntries>>>([]);
 
   useEffect(() => {
     void (async () => {
-      const initialFavorites = await getFavoriteFoodItemIds();
+      const [initialFavorites, recents] = await Promise.all([getFavoriteFoodItemIds(), getRecentFoodItemEntries()]);
       setFavorites(initialFavorites);
+      setRecentItems(recents.filter((entry) => entry.station_id === stationId));
     })();
-  }, []);
+  }, [stationId]);
 
   const allergenOptions = useMemo(() => Array.from(new Set(items.flatMap((item) => item.allergens))).sort(), [items]);
   const flagOptions = useMemo(() => Array.from(new Set(items.flatMap((item) => item.dietary_flags))).sort(), [items]);
@@ -82,6 +91,9 @@ export default function FoodItemsScreen() {
       station_name: stationName,
     });
   };
+
+  const activeFiltersCount = selectedAllergens.length + selectedFlags.length;
+  const resultsLabel = `${filteredItems.length} items${activeFiltersCount > 0 ? ` · ${activeFiltersCount} filters active` : ''}`;
 
   const renderEmptyState = () => {
     if (items.length === 0) {
@@ -141,7 +153,16 @@ export default function FoodItemsScreen() {
         onToggleAllergen={(value) => toggleFilter(value, selectedAllergens, setSelectedAllergens)}
         onToggleFlag={(value) => toggleFilter(value, selectedFlags, setSelectedFlags)}
         onClear={clearFilters}
+        onRemoveActiveFilter={(type, value) => {
+          if (type === 'allergen') {
+            setSelectedAllergens((prev) => prev.filter((entry) => entry !== value));
+            return;
+          }
+          setSelectedFlags((prev) => prev.filter((entry) => entry !== value));
+        }}
       />
+
+      <Text style={[styles.resultsSummary, { color: colors.textSecondary }]}>{resultsLabel}</Text>
 
       {loading ? (
         <SkeletonList count={5} type="food" />
@@ -154,6 +175,7 @@ export default function FoodItemsScreen() {
           data={filteredItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={<RecentItemsSection items={recentItems} onPressItem={(item) => item.station_id && router.push(`/food-items/${item.station_id}?stationName=${encodeURIComponent(item.station_name ?? 'Food Items')}`)} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
             <FoodItemCard
@@ -161,11 +183,24 @@ export default function FoodItemsScreen() {
               isFavorite={favorites.includes(item.id)}
               onToggleFavorite={handleToggleFavorite}
               onViewed={handleViewItem}
+              onAddToTray={addItem}
+              onRemoveFromTray={removeItem}
+              inTray={hasItem(item.id)}
             />
           )}
         />
       )}
+      <TrayBar onOpen={() => setTrayOpen(true)} />
+      <TraySheet visible={trayOpen} onClose={() => setTrayOpen(false)} />
     </View>
+  );
+}
+
+export default function FoodItemsScreen() {
+  return (
+    <TrayProvider>
+      <FoodItemsContent />
+    </TrayProvider>
   );
 }
 
@@ -194,7 +229,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
   },
-  listContent: { padding: spacing.lg, paddingTop: spacing.sm },
+  resultsSummary: { ...typography.bodySmall, paddingHorizontal: spacing.lg, paddingBottom: spacing.sm },
+  listContent: { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   stateText: { ...typography.body, textAlign: 'center' },
   emptyTitle: { ...typography.h3, marginBottom: spacing.xs, textAlign: 'center' },

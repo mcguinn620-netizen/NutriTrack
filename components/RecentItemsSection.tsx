@@ -1,9 +1,11 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { borderRadius, spacing, typography } from '@/constants/theme';
+import { spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { RecentFoodItem } from '@/services/recentItemsService';
+import CardSurface from '@/components/ui/CardSurface';
+import { MetaRow, SectionLabel } from '@/components/ui/primitives';
 
 interface RecentItemsSectionProps {
   items: RecentFoodItem[];
@@ -19,27 +21,30 @@ export default function RecentItemsSection({ items, onPressItem }: RecentItemsSe
 
   return (
     <View style={styles.container}>
+      <SectionLabel label="Continue browsing" />
       <Text style={[styles.title, { color: colors.text }]}>Recent Items</Text>
-      <View style={[styles.panel, { borderColor: colors.border, backgroundColor: colors.surface }]}> 
-        {items.slice(0, 6).map((item) => (
+      <CardSurface>
+        {items.slice(0, 5).map((item, index) => (
           <Pressable
             key={`${item.id}-${item.viewed_at}`}
             onPress={() => onPressItem(item)}
             style={({ pressed }) => [
               styles.itemRow,
-              { backgroundColor: pressed ? colors.surfaceHover : 'transparent' },
+              {
+                backgroundColor: pressed ? colors.surfaceHover : 'transparent',
+                borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth,
+                borderTopColor: colors.border,
+              },
             ]}
           >
             <View style={styles.itemTextContainer}>
               <Text style={[styles.itemName, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
-              <Text style={[styles.itemMeta, { color: colors.textSecondary }]} numberOfLines={1}>
-                {item.station_name ?? 'Last viewed item'}
-              </Text>
+              <MetaRow icon="room-service" text={item.station_name ?? 'Last viewed item'} />
             </View>
-            <MaterialIcons name="chevron-right" size={18} color={colors.textLight} />
+            <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />
           </Pressable>
         ))}
-      </View>
+      </CardSurface>
     </View>
   );
 }
@@ -47,15 +52,12 @@ export default function RecentItemsSection({ items, onPressItem }: RecentItemsSe
 const styles = StyleSheet.create({
   container: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
   title: { ...typography.h3, marginBottom: spacing.sm },
-  panel: { borderWidth: 1, borderRadius: borderRadius.md, paddingVertical: spacing.xs },
   itemRow: {
-    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   itemTextContainer: { flex: 1, marginRight: spacing.sm },
-  itemName: { ...typography.bodySmall, fontWeight: '600' },
-  itemMeta: { ...typography.caption },
+  itemName: { ...typography.bodySmall, fontWeight: '700' },
 });

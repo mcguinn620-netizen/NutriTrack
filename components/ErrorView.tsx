@@ -1,7 +1,9 @@
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
+import CardSurface from '@/components/ui/CardSurface';
 
 interface ErrorViewProps {
   title?: string;
@@ -14,21 +16,26 @@ export default function ErrorView({ title = 'Something went wrong', message, onR
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.title, { color: colors.error }]}>{title}</Text>
-      <Text style={[styles.message, { color: colors.textSecondary }]}>{message}</Text>
-      {onRetry ? (
-        <Pressable
-          onPress={onRetry}
-          style={({ pressed }) => [
-            styles.retryButton,
-            {
-              backgroundColor: pressed ? colors.primaryDark ?? colors.primary : colors.primary,
-            },
-          ]}
-        >
-          <Text style={styles.retryButtonText}>Retry</Text>
-        </Pressable>
-      ) : null}
+      <CardSurface style={styles.card}>
+        <View style={styles.iconWrap}>
+          <MaterialIcons name="error-outline" size={22} color={colors.error} />
+        </View>
+        <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+        <Text style={[styles.message, { color: colors.textSecondary }]}>{message}</Text>
+        {onRetry ? (
+          <Pressable
+            onPress={onRetry}
+            style={({ pressed }) => [
+              styles.retryButton,
+              {
+                backgroundColor: pressed ? colors.primaryDark ?? colors.primary : colors.primary,
+              },
+            ]}
+          >
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </Pressable>
+        ) : null}
+      </CardSurface>
     </View>
   );
 }
@@ -39,20 +46,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.lg,
   },
+  card: { width: '100%', maxWidth: 480 },
+  iconWrap: { marginBottom: spacing.xs },
   title: {
     ...typography.h3,
     marginBottom: spacing.xs,
-    textAlign: 'center',
   },
   message: {
     ...typography.body,
-    textAlign: 'center',
   },
   retryButton: {
     marginTop: spacing.md,
-    borderRadius: borderRadius.sm,
+    borderRadius: borderRadius.md,
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
+    alignSelf: 'flex-start',
   },
   retryButtonText: {
     ...typography.body,

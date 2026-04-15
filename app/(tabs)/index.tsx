@@ -10,6 +10,8 @@ import { getRecentFoodItemEntries, RecentFoodItem } from '@/services/recentItems
 import ErrorView from '@/components/ErrorView';
 import { SkeletonList } from '@/components/LoadingSkeletons';
 import RecentItemsSection from '@/components/RecentItemsSection';
+import CardSurface from '@/components/ui/CardSurface';
+import { MetaRow } from '@/components/ui/primitives';
 
 function formatLastUpdated(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -77,9 +79,7 @@ export default function DiningHallsScreen() {
             },
           ]}
         >
-          <Text style={[styles.refreshButtonText, { color: '#ffffff' }]}>
-            {isRefreshing ? 'Refreshing...' : 'Refresh from Database'}
-          </Text>
+          <Text style={styles.refreshButtonText}>{isRefreshing ? 'Refreshing...' : 'Refresh from Database'}</Text>
         </Pressable>
       </View>
 
@@ -98,21 +98,30 @@ export default function DiningHallsScreen() {
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={<RecentItemsSection items={recentItems} onPressItem={handleOpenRecentItem} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-          renderItem={({ item }) => (
-            <Pressable
-              onPress={() => router.push(`/stations/${item.id}?hallName=${encodeURIComponent(item.name)}`)}
-              style={({ pressed }) => [
-                styles.card,
-                {
-                  backgroundColor: pressed ? colors.surfaceHover : colors.surface,
-                  borderColor: colors.border,
-                },
-              ]}
-            >
-              <Text style={[styles.cardTitle, { color: colors.text }]}>{item.name}</Text>
-              <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />
-            </Pressable>
-          )}
+          renderItem={({ item }) => {
+            const stationCount = (item as { station_count?: number }).station_count;
+
+            return (
+              <CardSurface
+                style={styles.card}
+                onPress={() => router.push(`/stations/${item.id}?hallName=${encodeURIComponent(item.name)}`)}
+              >
+                <View style={styles.cardHeader}>
+                  <View style={[styles.iconBadge, { backgroundColor: colors.surfaceHover }]}>
+                    <MaterialIcons name="apartment" size={18} color={colors.primary} />
+                  </View>
+                  <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />
+                </View>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>{item.name}</Text>
+                <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>Fresh menus and nutrition details</Text>
+                <MetaRow
+                  icon="restaurant"
+                  text={typeof stationCount === 'number' ? `${stationCount} stations` : 'Station count unavailable'}
+                  right={<Text style={[styles.metaHint, { color: colors.textLight }]}>Open</Text>}
+                />
+              </CardSurface>
+            );
+          }}
         />
       )}
     </View>
@@ -140,21 +149,14 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.sm,
     alignSelf: 'flex-start',
   },
-  refreshButtonText: {
-    ...typography.body,
-    fontWeight: '600',
-  },
-  listContent: { padding: spacing.lg, paddingTop: spacing.sm },
-  card: {
-    borderWidth: 1,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardTitle: { ...typography.h3, flex: 1, marginRight: spacing.sm },
+  refreshButtonText: { ...typography.bodySmall, color: '#ffffff', fontWeight: '700' },
+  listContent: { paddingBottom: spacing.lg },
+  card: { marginHorizontal: spacing.lg, marginBottom: spacing.sm },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  iconBadge: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.xs },
+  cardTitle: { ...typography.h3 },
+  cardSubtitle: { ...typography.bodySmall, marginTop: 2 },
+  metaHint: { ...typography.caption, fontWeight: '700' },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: spacing.lg },
   stateText: { ...typography.body },
 });
