@@ -3,10 +3,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { TrayProvider } from '@/components/tray/TrayContext';
 
-// 1. This is the inner component that USES the theme
 function AppContent() {
-  const { isDark } = useTheme(); // This only works if ThemeProvider is ABOVE this in the tree
+  const { isDark } = useTheme();
+
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -32,13 +33,14 @@ function AppContent() {
   );
 }
 
-// 2. This is the actual DEFAULT EXPORT that Expo Router looks for
 export default function RootLayout() {
   return (
-    <ThemeProvider> 
+    <ThemeProvider>
       <SafeAreaProvider>
         <AlertProvider>
-          <AppContent /> 
+          <TrayProvider>
+            <AppContent />
+          </TrayProvider>
         </AlertProvider>
       </SafeAreaProvider>
     </ThemeProvider>

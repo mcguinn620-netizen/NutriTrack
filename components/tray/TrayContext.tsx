@@ -1,5 +1,9 @@
-import React, { createContext, ReactNode, useContext, useMemo, useState } from 'react';
+import React, { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FoodItem } from '@/services/netNutritionService';
+import { MealCategory, mealLogService } from '@/services/mealLogService';
+
+const TRAY_KEY = '@tray_entries_v1';
 
 interface TrayEntry {
   item: FoodItem;
@@ -21,10 +25,13 @@ interface TrayTotals {
 interface TrayContextValue {
   entries: TrayEntry[];
   totals: TrayTotals;
+  initialized: boolean;
   addItem: (item: FoodItem) => void;
   removeItem: (itemId: string) => void;
   clearTray: () => void;
   hasItem: (itemId: string) => boolean;
+  addItemToMeal: (item: FoodItem, category: MealCategory, options?: { stationName?: string; source?: 'direct' | 'favorites' }) => Promise<void>;
+  logTrayToMeal: (category: MealCategory, options?: { stationName?: string }) => Promise<number>;
 }
 
 const TrayContext = createContext<TrayContextValue | undefined>(undefined);
@@ -51,8 +58,44 @@ function getMetric(item: FoodItem, keys: string[]): { value: number; found: bool
   return { value: 0, found: false };
 }
 
+function sanitizeTrayEntries(value: unknown): TrayEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => entry && typeof entry === 'object' && 'item' in entry)
+    .map((entry) => {
+      const candidate = entry as TrayEntry;
+      return {
+        item: candidate.item,
+        quantity: Math.max(1, Math.floor(candidate.quantity ?? 1)),
+      };
+    });
+}
+
 export function TrayProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<TrayEntry[]>([]);
+  const [initialized, setInitialized] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(TRAY_KEY);
+        if (raw) {
+          setEntries(sanitizeTrayEntries(JSON.parse(raw)));
+        }
+      } catch (error) {
+        console.warn('[TrayContext] Failed to hydrate tray:', error);
+      } finally {
+        setInitialized(true);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!initialized) return;
+    void AsyncStorage.setItem(TRAY_KEY, JSON.stringify(entries)).catch((error) => {
+      console.warn('[TrayContext] Failed to persist tray:', error);
+    });
+  }, [entries, initialized]);
 
   const addItem = (item: FoodItem) => {
     setEntries((prev) => {
@@ -77,6 +120,23 @@ export function TrayProvider({ children }: { children: ReactNode }) {
 
   const clearTray = () => setEntries([]);
   const hasItem = (itemId: string) => entries.some((entry) => entry.item.id === itemId);
+
+  const addItemToMeal: TrayContextValue['addItemToMeal'] = async (item, category, options) => {
+    await mealLogService.logFoodItem({
+      item,
+      category,
+      source: options?.source ?? 'direct',
+      stationName: options?.stationName,
+    });
+  };
+
+  const logTrayToMeal: TrayContextValue['logTrayToMeal'] = async (category, options) => {
+    if (entries.length === 0) return 0;
+    await mealLogService.logTrayEntries({ entries, category, stationName: options?.stationName, source: 'tray' });
+    const count = entries.length;
+    clearTray();
+    return count;
+  };
 
   const totals = useMemo(() => {
     return entries.reduce<TrayTotals>(
@@ -112,7 +172,11 @@ export function TrayProvider({ children }: { children: ReactNode }) {
     );
   }, [entries]);
 
-  return <TrayContext.Provider value={{ entries, totals, addItem, removeItem, clearTray, hasItem }}>{children}</TrayContext.Provider>;
+  return (
+    <TrayContext.Provider value={{ entries, totals, initialized, addItem, removeItem, clearTray, hasItem, addItemToMeal, logTrayToMeal }}>
+      {children}
+    </TrayContext.Provider>
+  );
 }
 
 export function useTray() {

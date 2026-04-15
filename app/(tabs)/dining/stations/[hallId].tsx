@@ -76,10 +76,10 @@ export default function StationsScreen() {
           renderItem={({ item }) => (
             <CardSurface
               style={styles.card}
-              onPress={() => router.push(`/food-items/${item.id}?stationName=${encodeURIComponent(item.name)}`)}
+              onPress={() => router.push(`/dining/food-items/${item.id}?stationName=${encodeURIComponent(item.name)}`)}
             >
               <View style={styles.cardHeader}>
-                <View style={[styles.iconBadge, { backgroundColor: colors.surfaceHover }]}>
+                <View style={[styles.iconBadge, { backgroundColor: colors.surfaceHover }]}> 
                   <MaterialIcons name="ramen-dining" size={18} color={colors.primary} />
                 </View>
                 <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />

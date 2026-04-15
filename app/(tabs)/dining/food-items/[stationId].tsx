@@ -1,21 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useFoodItems } from '@/hooks/useNetNutrition';
 import { FoodItem } from '@/services/netNutritionService';
+import { MealCategory } from '@/services/mealLogService';
 import { getFavoriteFoodItemIds, toggleFavoriteFoodItem } from '@/services/favoritesService';
-import { getRecentFoodItemEntries, recordRecentFoodItem } from '@/services/recentItemsService';
 import ErrorView from '@/components/ErrorView';
 import { SkeletonList } from '@/components/LoadingSkeletons';
 import FoodItemCard from '@/components/FoodItemCard';
 import FilterPanel from '@/components/FilterPanel';
-import RecentItemsSection from '@/components/RecentItemsSection';
 import TrayBar from '@/components/tray/TrayBar';
 import TraySheet from '@/components/tray/TraySheet';
-import { TrayProvider, useTray } from '@/components/tray/TrayContext';
+import { useTray } from '@/components/tray/TrayContext';
 
 function formatLastUpdated(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -27,11 +26,10 @@ function formatLastUpdated(timestamp: number | null): string | null {
   });
 }
 
-function FoodItemsContent() {
+export default function FoodItemsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const router = useRouter();
-  const { addItem, removeItem, hasItem } = useTray();
+  const { addItem, removeItem, hasItem, addItemToMeal } = useTray();
   const { stationId, stationName } = useLocalSearchParams<{ stationId: string; stationName?: string }>();
   const { data: items, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useFoodItems(stationId);
 
@@ -40,13 +38,11 @@ function FoodItemsContent() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [trayOpen, setTrayOpen] = useState(false);
-  const [recentItems, setRecentItems] = useState<Awaited<ReturnType<typeof getRecentFoodItemEntries>>>([]);
 
   useEffect(() => {
     void (async () => {
-      const [initialFavorites, recents] = await Promise.all([getFavoriteFoodItemIds(), getRecentFoodItemEntries()]);
+      const initialFavorites = await getFavoriteFoodItemIds();
       setFavorites(initialFavorites);
-      setRecentItems(recents.filter((entry) => entry.station_id === stationId));
     })();
   }, [stationId]);
 
@@ -83,13 +79,8 @@ function FoodItemsContent() {
     setFavorites(persisted);
   };
 
-  const handleViewItem = async (item: FoodItem) => {
-    await recordRecentFoodItem({
-      id: item.id,
-      name: item.name,
-      station_id: item.station_id,
-      station_name: stationName,
-    });
+  const handleAddToMeal = async (item: FoodItem, category: MealCategory) => {
+    await addItemToMeal(item, category, { stationName, source: 'direct' });
   };
 
   const activeFiltersCount = selectedAllergens.length + selectedFlags.length;
@@ -175,16 +166,15 @@ function FoodItemsContent() {
           data={filteredItems}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
-          ListHeaderComponent={<RecentItemsSection items={recentItems} onPressItem={(item) => item.station_id && router.push(`/food-items/${item.station_id}?stationName=${encodeURIComponent(item.station_name ?? 'Food Items')}`)} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => (
             <FoodItemCard
               item={item}
               isFavorite={favorites.includes(item.id)}
               onToggleFavorite={handleToggleFavorite}
-              onViewed={handleViewItem}
               onAddToTray={addItem}
               onRemoveFromTray={removeItem}
+              onAddToMeal={handleAddToMeal}
               inTray={hasItem(item.id)}
             />
           )}
@@ -193,14 +183,6 @@ function FoodItemsContent() {
       <TrayBar onOpen={() => setTrayOpen(true)} />
       <TraySheet visible={trayOpen} onClose={() => setTrayOpen(false)} />
     </View>
-  );
-}
-
-export default function FoodItemsScreen() {
-  return (
-    <TrayProvider>
-      <FoodItemsContent />
-    </TrayProvider>
   );
 }
 
