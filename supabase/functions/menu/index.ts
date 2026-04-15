@@ -14,7 +14,17 @@ interface HiddenFields {
   __EVENTVALIDATION: string;
   __VIEWSTATEGENERATOR?: string;
 }
-interface ScrapeItem { id: string; name: string; calories: number | null; protein: number | null; carbs: number | null; fat: number | null; rawLabel: Record<string, unknown>; }
+interface ScrapeItem {
+  id: string;
+  name: string;
+  calories: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  rawLabel: Record<string, unknown>;
+  allergens?: string[];
+  dietaryFlags?: string[];
+}
 interface ScrapeCategory { id: string; hallId: string; name: string; items: ScrapeItem[]; }
 interface ScrapeHall { id: string; name: string; categories: ScrapeCategory[]; }
 interface MenuResponse {
@@ -43,6 +53,9 @@ function parseSetCookie(headers: Headers, existing: Map<string, string>): void {
 const cookieHeader = (jar: Map<string, string>) => Array.from(jar.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
 const stripText = (v?: string | null) => (v ?? '').replace(/\s+/g, ' ').trim();
 const parseNumeric = (v?: string | null) => (v ? Number(v.replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.[0] ?? NaN) : NaN);
+function isStartupError(text: string): boolean {
+  return text.includes('NetNutrition Start-up Error') || text.includes('ANA_border');
+}
 
 function parseHtmlDocument(html: string) { const doc = new DOMParser().parseFromString(html, 'text/html'); if (!doc) throw new Error('HTML parse failed'); return doc; }
 function extractHiddenFields(html: string): HiddenFields {
@@ -119,6 +132,8 @@ interface ParsedStationItem {
   name: string;
   servingSize: string | null;
   detailOid: string | null;
+  allergens: string[];
+  dietaryFlags: string[];
 }
 
 interface ParsedStationCategory {
@@ -169,6 +184,15 @@ function parseStationCategoriesFromItemPanel(html: string): ParsedStationCategor
         ?? row.querySelector('[class*="itemServing"]')?.textContent
         ?? null,
     ) || null;
+    const allergens: string[] = [];
+    const dietaryFlags: string[] = [];
+    for (const img of Array.from(row.querySelectorAll('img'))) {
+      const title = stripText(img.getAttribute('title'));
+      if (!title) continue;
+      const lower = title.toLowerCase();
+      if (lower === 'vegan' || lower === 'vegetarian') dietaryFlags.push(title);
+      else allergens.push(title);
+    }
 
     if (!currentCategory) {
       currentCategory = { name: 'All Items', items: [] };
@@ -180,6 +204,8 @@ function parseStationCategoriesFromItemPanel(html: string): ParsedStationCategor
       name: itemName,
       servingSize,
       detailOid,
+      allergens,
+      dietaryFlags,
     });
   }
 
@@ -230,10 +256,98 @@ function parseNutritionLabel(html: string) {
 
 class NetNutritionClient {
   private cookieJar = new Map<string, string>(); private hiddenFields: HiddenFields | null = null;
-  async getHomepage() { const res = await fetch(`${NETNUTRITION_BASE}#`, { headers: { 'user-agent': USER_AGENT, accept: 'text/html,application/xhtml+xml' } }); if (!res.ok) throw new Error(`GET homepage failed: ${res.status}`); parseSetCookie(res.headers, this.cookieJar); const html = await res.text(); this.hiddenFields = extractHiddenFields(html); return { units: parseUnits(html) }; }
+
+  private ensureExternalCookie() {
+    if (!this.cookieJar.has('CBORD.netnutrition2')) this.cookieJar.set('CBORD.netnutrition2', 'NNexternalID=1');
+  }
+
+  private async initSession(): Promise<string> {
+    this.ensureExternalCookie();
+    let current = `${NETNUTRITION_BASE}#`;
+    for (let i = 0; i < 8; i++) {
+      const res = await fetch(current, {
+        headers: {
+          'user-agent': USER_AGENT,
+          accept: 'text/html,application/xhtml+xml',
+          cookie: cookieHeader(this.cookieJar),
+        },
+        redirect: 'manual',
+      });
+      parseSetCookie(res.headers, this.cookieJar);
+      this.ensureExternalCookie();
+
+      const location = res.headers.get('location');
+      if (res.status >= 300 && res.status < 400 && location) {
+        current = new URL(location, current).toString();
+        continue;
+      }
+
+      if (!res.ok) throw new Error(`GET homepage failed: ${res.status}`);
+      const html = await res.text();
+      if (isStartupError(html)) throw new Error('Startup error on homepage bootstrap');
+      this.hiddenFields = extractHiddenFields(html);
+      return html;
+    }
+    throw new Error('GET homepage failed: too many redirects');
+  }
+
+  async getHomepage() {
+    let lastErr: unknown;
+    for (let i = 1; i <= RETRIES; i++) {
+      try {
+        const html = await this.initSession();
+        return { units: parseUnits(html) };
+      } catch (e) {
+        lastErr = e;
+        if (i < RETRIES) await new Promise((r) => setTimeout(r, i * 200));
+      }
+    }
+    throw new Error(`Failed to initialize NetNutrition session: ${String(lastErr)}`);
+  }
+
   private buildForm(extra: Record<string, string>) { if (!this.hiddenFields) throw new Error('Hidden ASP.NET fields not initialized'); const form = new URLSearchParams({ __VIEWSTATE: this.hiddenFields.__VIEWSTATE, __EVENTVALIDATION: this.hiddenFields.__EVENTVALIDATION, ...extra }); if (this.hiddenFields.__VIEWSTATEGENERATOR) form.set('__VIEWSTATEGENERATOR', this.hiddenFields.__VIEWSTATEGENERATOR); return form; }
   private refreshHiddenFields(html: string) { try { this.hiddenFields = extractHiddenFields(html); } catch { /* expected for panel responses */ } }
-  async postWithRetry(path: string, data: Record<string, string>) { let lastErr: unknown; for (let i = 1; i <= RETRIES; i++) { try { const form = this.buildForm(data); const res = await fetch(`${NETNUTRITION_BASE}/${path}`, { method: 'POST', headers: { 'user-agent': USER_AGENT, accept: 'application/json,text/html,*/*', 'content-type': 'application/x-www-form-urlencoded; charset=UTF-8', 'x-requested-with': 'XMLHttpRequest', origin: NETNUTRITION_ROOT, referer: `${NETNUTRITION_BASE}#`, cookie: cookieHeader(this.cookieJar) }, body: form.toString() }); const text = await res.text(); parseSetCookie(res.headers, this.cookieJar); this.refreshHiddenFields(text); if (!res.ok) throw new Error(`HTTP ${res.status}`); return text; } catch (e) { lastErr = e; console.error(`POST ${path} failed retry ${i}/${RETRIES}`, e); if (i < RETRIES) await new Promise((r) => setTimeout(r, i * 200)); } } throw new Error(`POST ${path} failed after retries: ${String(lastErr)}`); }
+  async postWithRetry(path: string, data: Record<string, string>) {
+    let lastErr: unknown;
+    for (let i = 1; i <= RETRIES; i++) {
+      try {
+        const form = this.buildForm(data);
+        this.ensureExternalCookie();
+        const res = await fetch(`${NETNUTRITION_BASE}/${path}`, {
+          method: 'POST',
+          headers: {
+            'user-agent': USER_AGENT,
+            accept: 'application/json,text/html,*/*',
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'x-requested-with': 'XMLHttpRequest',
+            origin: NETNUTRITION_ROOT,
+            referer: `${NETNUTRITION_BASE}#`,
+            cookie: cookieHeader(this.cookieJar),
+          },
+          body: form.toString(),
+        });
+        const text = await res.text();
+        parseSetCookie(res.headers, this.cookieJar);
+        this.ensureExternalCookie();
+        this.refreshHiddenFields(text);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (isStartupError(text)) {
+          console.warn(`Startup error on ${path}; refreshing session and retrying`);
+          await this.initSession();
+          throw new Error('Startup error from NetNutrition');
+        }
+        return text;
+      } catch (e) {
+        lastErr = e;
+        console.error(`POST ${path} failed retry ${i}/${RETRIES}`, e);
+        if (i < RETRIES) {
+          await new Promise((r) => setTimeout(r, i * 200));
+          if (String(e).includes('Startup error')) await this.initSession();
+        }
+      }
+    }
+    throw new Error(`POST ${path} failed after retries: ${String(lastErr)}`);
+  }
   async selectUnitFromSidebar(unitId: string) { return parsePanelResponse(await this.postWithRetry('Unit/SelectUnitFromSideBar', { unitOid: unitId, selectedUnitOid: unitId })); }
   async selectChildUnit(unitId: string) { return parsePanelResponse(await this.postWithRetry('Unit/SelectUnitFromChildUnitsList', { unitOid: unitId, childUnitOid: unitId })); }
   async selectMenu(menuId: string) { return parsePanelResponse(await this.postWithRetry('Menu/SelectMenu', { menuOid: menuId, selectedMenuOid: menuId })); }
@@ -265,7 +379,13 @@ const isCacheFresh = (lastUpdated: string | null) => !!lastUpdated && (Date.now(
 async function upsertScrapeData(supabase: ReturnType<typeof getSupabaseAdmin>, halls: ScrapeHall[], updatedAt: string) {
   const hallRows = halls.map((h) => ({ id: h.id, name: h.name }));
   const catRows = halls.flatMap((h) => h.categories.map((c) => ({ id: c.id, hall_id: c.hallId, name: c.name })));
-  const itemRows = halls.flatMap((h) => h.categories.flatMap((c) => c.items.map((i) => ({ id: i.id, category_id: c.id, name: i.name }))));
+  const itemRows = halls.flatMap((h) => h.categories.flatMap((c) => c.items.map((i) => ({
+    id: i.id,
+    category_id: c.id,
+    name: i.name,
+    allergens: i.allergens ?? [],
+    dietary_flags: i.dietaryFlags ?? [],
+  }))));
   const factRows = halls.flatMap((h) => h.categories.flatMap((c) => c.items.map((i) => ({ id: `nf_${i.id}`, item_id: i.id, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat, raw_label_json: i.rawLabel }))));
   if (hallRows.length) { const { error } = await supabase.from('dining_halls').upsert(hallRows, { onConflict: 'id' }); if (error) throw error; }
   if (catRows.length) { const { error } = await supabase.from('menu_categories').upsert(catRows, { onConflict: 'id' }); if (error) throw error; }
@@ -283,7 +403,16 @@ async function scrapeAllHalls(): Promise<ScrapeHall[]> {
     let hops = 0;
     while (state.panelType === 'childUnitsPanel' && hops++ < 20) {
       const children = parseChildUnits(state.html || state.mergedHtml); if (!children.length) throw new Error(`No child units for ${unit.name}; htmlSnippet=${(state.html || state.mergedHtml).slice(0, 180)}`);
-      state = await client.selectChildUnit(children[0].id);
+      let nextState: ReturnType<typeof parsePanelResponse> | null = null;
+      for (const child of children) {
+        const candidate = await client.selectChildUnit(child.id);
+        if (candidate.panelType === 'menuPanel' || candidate.panelType === 'itemPanel' || candidate.panelType === 'childUnitsPanel') {
+          nextState = candidate;
+          if (candidate.panelType !== 'childUnitsPanel') break;
+        }
+      }
+      if (!nextState) throw new Error(`Unable to select child unit for ${unit.name}`);
+      state = nextState;
     }
     const categories: ScrapeCategory[] = [];
     if (state.panelType === 'menuPanel') {
@@ -316,6 +445,8 @@ async function scrapeAllHalls(): Promise<ScrapeHall[]> {
               protein: nutrition.protein,
               carbs: nutrition.carbs,
               fat: nutrition.fat,
+              allergens: item.allergens,
+              dietaryFlags: item.dietaryFlags,
               rawLabel: {
                 ...nutrition.raw,
                 serving_size: item.servingSize,
