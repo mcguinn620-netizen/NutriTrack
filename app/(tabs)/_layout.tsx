@@ -3,7 +3,6 @@ import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 import { useTheme } from '@/contexts/ThemeContext';
-// browser tab removed — file excluded via Tabs.Screen omission and hidden below
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
@@ -41,42 +40,34 @@ export default function TabLayout() {
       }}
     >
       <Tabs.Screen
-        name="index"
+        name="dining"
         options={{
-          title: 'Locations',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="restaurant-menu" size={size} color={color} />
-          ),
+          title: 'Dining',
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="restaurant-menu" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="today"
         options={{
           title: 'Today',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="today" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="today" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="week"
         options={{
           title: 'Week',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="bar-chart" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="bar-chart" size={size} color={color} />,
         }}
       />
       <Tabs.Screen
         name="favorites"
         options={{
           title: 'Favorites',
-          tabBarIcon: ({ color, size }) => (
-            <MaterialIcons name="favorite" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, size }) => <MaterialIcons name="favorite" size={size} color={color} />,
         }}
       />
-      {/* Hide orphaned browser route files from tab bar */}
+      <Tabs.Screen name="index" options={{ href: null }} />
       <Tabs.Screen name="browser" options={{ href: null }} />
     </Tabs>
   );

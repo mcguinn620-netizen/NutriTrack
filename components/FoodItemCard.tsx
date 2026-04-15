@@ -1,14 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { spacing, typography } from '@/constants/theme';
+import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { FoodItem } from '@/services/netNutritionService';
+import { MealCategory } from '@/services/mealLogService';
 import FavoriteButton from '@/components/FavoriteButton';
 import CardSurface from '@/components/ui/CardSurface';
 import { InfoChip, InlineStat, MetaRow, SectionLabel } from '@/components/ui/primitives';
 
 const MACRO_KEYS = new Set(['calories', 'protein', 'carbs', 'carbohydrates', 'fat', 'total fat', 'fiber', 'sugar', 'sodium', 'cholesterol']);
+
+const MEAL_CATEGORIES: MealCategory[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
 
 function formatNutrientLabel(key: string) {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
@@ -28,9 +31,9 @@ interface FoodItemCardProps {
   item: FoodItem;
   isFavorite: boolean;
   onToggleFavorite: (id: string) => void;
-  onViewed: (item: FoodItem) => void;
   onAddToTray?: (item: FoodItem) => void;
   onRemoveFromTray?: (itemId: string) => void;
+  onAddToMeal?: (item: FoodItem, category: MealCategory) => void;
   inTray?: boolean;
 }
 
@@ -38,9 +41,9 @@ export default function FoodItemCard({
   item,
   isFavorite,
   onToggleFavorite,
-  onViewed,
   onAddToTray,
   onRemoveFromTray,
+  onAddToMeal,
   inTray,
 }: FoodItemCardProps) {
   const { colors } = useTheme();
@@ -63,11 +66,7 @@ export default function FoodItemCard({
   const fat = renderCompactValue(item, ['fat', 'total fat']);
 
   const toggleExpanded = () => {
-    const nextExpanded = !expanded;
-    setExpanded(nextExpanded);
-    if (nextExpanded) {
-      onViewed(item);
-    }
+    setExpanded((prev) => !prev);
   };
 
   const renderNutrientRows = (entries: [string, unknown][]) => {
@@ -125,6 +124,21 @@ export default function FoodItemCard({
           <MaterialIcons name={expanded ? 'expand-less' : 'expand-more'} size={20} color={colors.primary} />
         </Pressable>
       </View>
+
+
+      {onAddToMeal ? (
+        <View style={styles.mealActionRow}>
+          {MEAL_CATEGORIES.map((category) => (
+            <Pressable
+              key={`${item.id}-${category}`}
+              onPress={() => onAddToMeal(item, category)}
+              style={[styles.mealActionButton, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            >
+              <Text style={[styles.mealActionText, { color: colors.primary }]}>{category}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {expanded ? (
         <View style={styles.detailsContainer}>
@@ -186,6 +200,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   trayButtonText: { ...typography.caption, fontWeight: '600' },
+  mealActionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.xs },
+  mealActionButton: { borderWidth: 1, borderRadius: borderRadius.full, paddingHorizontal: spacing.sm, paddingVertical: 6 },
+  mealActionText: { ...typography.caption, fontWeight: '700', textTransform: 'capitalize' },
   detailsContainer: { marginTop: spacing.md, gap: spacing.sm },
   nutrientRow: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
   nutrientLabel: { ...typography.bodySmall, flex: 1 },

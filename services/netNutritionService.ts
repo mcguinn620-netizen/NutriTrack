@@ -428,3 +428,20 @@ export async function refreshFromDatabase(): Promise<boolean> {
   await clearAllCachedNutritionData();
   return true;
 }
+
+export async function getFoodItemsByIds(ids: string[]): Promise<FoodItem[]> {
+  const uniqueIds = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+  if (uniqueIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('food_items')
+    .select('*')
+    .in('id', uniqueIds);
+
+  if (error) {
+    console.error('[netNutritionService] getFoodItemsByIds failed:', error);
+    throw error;
+  }
+
+  return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
+}

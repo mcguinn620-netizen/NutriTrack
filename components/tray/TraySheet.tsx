@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import CardSurface from '@/components/ui/CardSurface';
+import { MealCategory } from '@/services/mealLogService';
 import { useTray } from './TrayContext';
 
 interface TraySheetProps {
@@ -11,9 +12,19 @@ interface TraySheetProps {
   onClose: () => void;
 }
 
+const MEAL_CATEGORIES: MealCategory[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
+
 export default function TraySheet({ visible, onClose }: TraySheetProps) {
   const { colors } = useTheme();
-  const { entries, totals, addItem, removeItem, clearTray } = useTray();
+  const { entries, totals, addItem, removeItem, clearTray, logTrayToMeal } = useTray();
+  const [selectedCategory, setSelectedCategory] = useState<MealCategory>('lunch');
+
+  const handleLogTray = async () => {
+    const loggedCount = await logTrayToMeal(selectedCategory);
+    if (loggedCount > 0) {
+      onClose();
+    }
+  };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -29,6 +40,27 @@ export default function TraySheet({ visible, onClose }: TraySheetProps) {
             {totals.hasProtein ? Math.round(totals.protein) : '—'} C {totals.hasCarbs ? Math.round(totals.carbs) : '—'} F{' '}
             {totals.hasFat ? Math.round(totals.fat) : '—'}
           </Text>
+
+          <Text style={[styles.mealTitle, { color: colors.text }]}>Log tray to meal</Text>
+          <View style={styles.mealCategoryRow}>
+            {MEAL_CATEGORIES.map((category) => (
+              <Pressable
+                key={category}
+                onPress={() => setSelectedCategory(category)}
+                style={[
+                  styles.mealCategoryButton,
+                  {
+                    borderColor: selectedCategory === category ? colors.primary : colors.border,
+                    backgroundColor: selectedCategory === category ? `${colors.primary}22` : colors.surface,
+                  },
+                ]}
+              >
+                <Text style={[styles.mealCategoryText, { color: selectedCategory === category ? colors.primary : colors.textSecondary }]}>
+                  {category}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
 
           <ScrollView contentContainerStyle={styles.list}>
             {entries.length === 0 ? (
@@ -50,7 +82,10 @@ export default function TraySheet({ visible, onClose }: TraySheetProps) {
           </ScrollView>
 
           <View style={styles.footer}>
-            <Pressable onPress={clearTray} style={[styles.footerButton, { borderColor: colors.border }]}>
+            <Pressable onPress={handleLogTray} style={[styles.primaryFooterButton, { backgroundColor: colors.primary }]}> 
+              <Text style={styles.primaryFooterButtonText}>Log Tray to {selectedCategory}</Text>
+            </Pressable>
+            <Pressable onPress={clearTray} style={[styles.footerButton, { borderColor: colors.border }]}> 
               <Text style={[styles.footerButtonText, { color: colors.textSecondary }]}>Clear Tray</Text>
             </Pressable>
           </View>
@@ -74,6 +109,15 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { ...typography.h2 },
   summary: { ...typography.bodySmall, marginTop: spacing.xs },
+  mealTitle: { ...typography.body, marginTop: spacing.md, marginBottom: spacing.xs, fontWeight: '600' },
+  mealCategoryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
+  mealCategoryButton: {
+    borderWidth: 1,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  mealCategoryText: { ...typography.caption, textTransform: 'capitalize', fontWeight: '700' },
   list: { paddingVertical: spacing.md, gap: spacing.sm },
   empty: { ...typography.body, textAlign: 'center', marginTop: spacing.xl },
   entryCard: { marginBottom: spacing.xs },
@@ -82,7 +126,13 @@ const styles = StyleSheet.create({
   entryTitle: { ...typography.body, fontWeight: '600' },
   entryMeta: { ...typography.caption, marginTop: 2 },
   entryActions: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  footer: { paddingTop: spacing.xs },
+  footer: { paddingTop: spacing.xs, gap: spacing.xs },
+  primaryFooterButton: {
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  primaryFooterButtonText: { ...typography.bodySmall, fontWeight: '700', color: '#fff', textTransform: 'capitalize' },
   footerButton: {
     borderWidth: 1,
     borderRadius: borderRadius.md,

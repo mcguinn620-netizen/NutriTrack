@@ -4,18 +4,13 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme, ThemeMode } from '@/contexts/ThemeContext';
-import { useDailyLog } from '@/hooks/useDailyLog';
+import { useMealLog } from '@/hooks/useMealLog';
 import { useGoals } from '@/hooks/useGoals';
 import { MacroCard } from '@/components/ui/MacroCard';
 import { useAlert } from '@/template';
 import { DailyGoals } from '@/services/storage';
 
-const MEAL_TIMES: ('Breakfast' | 'Lunch' | 'Dinner' | 'Snacks')[] = [
-  'Breakfast',
-  'Lunch',
-  'Dinner',
-  'Snacks',
-];
+const MEAL_TIMES = ['breakfast', 'lunch', 'dinner', 'snacks'] as const;
 
 const THEME_OPTIONS: { mode: ThemeMode; label: string; icon: string }[] = [
   { mode: 'light', label: 'Light', icon: 'wb-sunny' },
@@ -28,9 +23,8 @@ export default function TodayScreen() {
   const { showAlert } = useAlert();
   const { colors, themeMode, setThemeMode } = useTheme();
   const today = new Date().toISOString().split('T')[0];
-  const { meals, removeMeal, getMealsByTime, getTotals } = useDailyLog(today);
+  const { entries, byCategory, totals, removeEntry } = useMealLog(today);
   const { goals, updateGoals } = useGoals();
-  const totals = getTotals();
   const [goalsModalVisible, setGoalsModalVisible] = useState(false);
   const [editedGoals, setEditedGoals] = useState<DailyGoals>(goals);
 
@@ -54,21 +48,21 @@ export default function TodayScreen() {
     setGoalsModalVisible(true);
   };
 
-  const handleRemoveMeal = (timestamp: string, mealName: string) => {
+  const handleRemoveMeal = (entryId: string, mealName: string) => {
     showAlert('Remove Meal', `Remove ${mealName} from your log?`, [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => removeMeal(timestamp) },
+      { text: 'Remove', style: 'destructive', onPress: () => removeEntry(entryId) },
     ]);
   };
 
-  const renderMealSection = (mealTime: 'Breakfast' | 'Lunch' | 'Dinner' | 'Snacks') => {
-    const mealsList = getMealsByTime(mealTime);
-    const sectionCalories = mealsList.reduce((acc, meal) => acc + meal.nutrition.calories, 0);
+  const renderMealSection = (mealTime: (typeof MEAL_TIMES)[number]) => {
+    const mealsList = byCategory[mealTime];
+    const sectionCalories = mealsList.reduce((acc, meal) => acc + meal.food.nutrients.calories * meal.quantity, 0);
 
     return (
       <View key={mealTime} style={styles.mealSection}>
         <View style={styles.mealHeader}>
-          <Text style={[styles.mealTitle, { color: colors.text }]}>{mealTime}</Text>
+          <Text style={[styles.mealTitle, { color: colors.text }]}>{mealTime.charAt(0).toUpperCase() + mealTime.slice(1)}</Text>
           <Text style={[styles.mealCalories, { color: colors.textSecondary }]}>{sectionCalories} cal</Text>
         </View>
 
@@ -79,15 +73,15 @@ export default function TodayScreen() {
           </View>
         ) : (
           mealsList.map((meal) => (
-            <View key={meal.timestamp} style={[styles.mealItem, { backgroundColor: colors.surface }]}>
+            <View key={meal.id} style={[styles.mealItem, { backgroundColor: colors.surface }]}>
               <View style={styles.mealInfo}>
-                <Text style={[styles.mealName, { color: colors.text }]}>{meal.mealName}</Text>
+                <Text style={[styles.mealName, { color: colors.text }]}>{meal.food.name} {meal.quantity > 1 ? `×${meal.quantity}` : ''}</Text>
                 <Text style={[styles.mealMacroText, { color: colors.textSecondary }]}>
-                  {meal.nutrition.calories} cal • {meal.nutrition.protein}g P • {meal.nutrition.carbs}g C • {meal.nutrition.fat}g F
+                  {meal.food.nutrients.calories * meal.quantity} cal • {meal.food.nutrients.protein * meal.quantity}g P • {meal.food.nutrients.carbs * meal.quantity}g C • {meal.food.nutrients.fat * meal.quantity}g F
                 </Text>
               </View>
               <Pressable
-                onPress={() => handleRemoveMeal(meal.timestamp, meal.mealName)}
+                onPress={() => handleRemoveMeal(meal.id, meal.food.name)}
                 hitSlop={8}
                 style={({ pressed }) => [styles.removeButton, pressed && styles.removeButtonPressed]}
               >
@@ -166,7 +160,7 @@ export default function TodayScreen() {
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Meals</Text>
         {MEAL_TIMES.map(renderMealSection)}
 
-        {meals.length === 0 && (
+        {entries.length === 0 && (
           <View style={styles.emptyState}>
             <MaterialIcons name="restaurant" size={64} color={colors.textLight} />
             <Text style={[styles.emptyStateTitle, { color: colors.text }]}>No Meals Logged</Text>

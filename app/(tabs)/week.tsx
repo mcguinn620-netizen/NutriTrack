@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { storageService, LoggedMeal } from '@/services/storage';
+import { MealLogEntry } from '@/services/mealLogService';
+import { useWeeklyMealLog } from '@/hooks/useMealLog';
 
 interface DayData {
   date: string;
@@ -12,49 +13,41 @@ interface DayData {
   protein: number;
   carbs: number;
   fat: number;
-  meals: LoggedMeal[];
+  meals: MealLogEntry[];
 }
 
 export default function WeekScreen() {
   const insets = useSafeAreaInsets();
   const { colors } = useTheme();
-  const [weekData, setWeekData] = useState<DayData[]>([]);
   const [selectedDay, setSelectedDay] = useState<DayData | null>(null);
+  const { entries, startDate } = useWeeklyMealLog(new Date());
 
-  useEffect(() => {
-    loadWeekData();
-  }, []);
-
-  const loadWeekData = async () => {
-    const days: DayData[] = [];
-    const today = new Date();
-
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
+  const weekData = useMemo(() => {
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    return Array.from({ length: 7 }, (_, offset) => {
+      const date = new Date(start);
+      date.setUTCDate(start.getUTCDate() + offset);
       const dateStr = date.toISOString().split('T')[0];
-      const meals = await storageService.getDailyLog(dateStr);
+      const meals = entries.filter((entry) => entry.date === dateStr);
 
       const totals = meals.reduce(
         (acc, meal) => ({
-          calories: acc.calories + meal.nutrition.calories,
-          protein: acc.protein + meal.nutrition.protein,
-          carbs: acc.carbs + meal.nutrition.carbs,
-          fat: acc.fat + meal.nutrition.fat,
+          calories: acc.calories + meal.food.nutrients.calories * meal.quantity,
+          protein: acc.protein + meal.food.nutrients.protein * meal.quantity,
+          carbs: acc.carbs + meal.food.nutrients.carbs * meal.quantity,
+          fat: acc.fat + meal.food.nutrients.fat * meal.quantity,
         }),
-        { calories: 0, protein: 0, carbs: 0, fat: 0 }
+        { calories: 0, protein: 0, carbs: 0, fat: 0 },
       );
 
-      days.push({
+      return {
         date: dateStr,
         dayName: date.toLocaleDateString('en-US', { weekday: 'short' }),
         ...totals,
         meals,
-      });
-    }
-
-    setWeekData(days);
-  };
+      };
+    });
+  }, [entries, startDate]);
 
   const maxCalories = Math.max(...weekData.map(d => d.calories), 1);
 
@@ -129,12 +122,12 @@ export default function WeekScreen() {
 
             <Text style={[styles.mealsTitle, { color: colors.text }]}>Meals ({selectedDay.meals.length})</Text>
             {selectedDay.meals.map((meal) => (
-              <View key={meal.timestamp} style={[styles.mealItem, { borderBottomColor: colors.borderLight }]}>
+              <View key={meal.id} style={[styles.mealItem, { borderBottomColor: colors.borderLight }]}>
                 <View>
-                  <Text style={[styles.mealName, { color: colors.text }]}>{meal.mealName}</Text>
-                  <Text style={[styles.mealTime, { color: colors.textSecondary }]}>{meal.mealTime}</Text>
+                  <Text style={[styles.mealName, { color: colors.text }]}>{meal.food.name} {meal.quantity > 1 ? `×${meal.quantity}` : ''}</Text>
+                  <Text style={[styles.mealTime, { color: colors.textSecondary }]}>{meal.category}</Text>
                 </View>
-                <Text style={[styles.mealCalories, { color: colors.textSecondary }]}>{meal.nutrition.calories} cal</Text>
+                <Text style={[styles.mealCalories, { color: colors.textSecondary }]}>{meal.food.nutrients.calories * meal.quantity} cal</Text>
               </View>
             ))}
           </View>
