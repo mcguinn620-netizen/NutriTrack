@@ -25,10 +25,20 @@ interface ScrapeItem {
   allergens?: string[];
   dietaryFlags?: string[];
 }
-interface ScrapeCategory { id: string; hallId: string; name: string; items: ScrapeItem[]; }
-interface ScrapeHall { id: string; name: string; categories: ScrapeCategory[]; }
+interface ScrapeCategory { id: string; hallId: string; stationId: string; name: string; items: ScrapeItem[]; }
+interface ScrapeStation { id: string; hallId: string; name: string; categories: ScrapeCategory[]; }
+interface ScrapeHall { id: string; name: string; stations: ScrapeStation[]; }
 interface MenuResponse {
-  halls: Array<{ name: string; categories: Array<{ name: string; items: Array<{ name: string; calories: number | null; protein: number | null; carbs: number | null; fat: number | null; }>; }>; }>;
+  halls: Array<{
+    name: string;
+    stations: Array<{
+      name: string;
+      categories: Array<{
+        name: string;
+        items: Array<{ name: string; calories: number | null; protein: number | null; carbs: number | null; fat: number | null; }>;
+      }>;
+    }>;
+  }>;
   last_updated: string | null;
 }
 
@@ -39,7 +49,7 @@ function getSupabaseAdmin() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-function parseSetCookie(headers: Headers, existing: Map<string, string>): void {
+function collectCookies(headers: Headers, existing: Map<string, string>): void {
   const combined = headers.get('set-cookie');
   if (!combined) return;
   const pieces = combined.split(/, (?=[^;]+=)/g);
@@ -319,7 +329,7 @@ class NetNutritionClient {
         },
         redirect: 'manual',
       });
-      parseSetCookie(res.headers, this.cookieJar);
+      collectCookies(res.headers, this.cookieJar);
       this.ensureExternalCookie();
 
       const location = res.headers.get('location');
@@ -340,7 +350,7 @@ class NetNutritionClient {
           cookie: cookieHeader(this.cookieJar),
         },
       });
-      parseSetCookie(res.headers, this.cookieJar);
+      collectCookies(res.headers, this.cookieJar);
       this.ensureExternalCookie();
       const html = await res.text();
       this.captureBootstrapDebug(finalUrl, res.status, html);
@@ -381,30 +391,34 @@ class NetNutritionClient {
 
   private buildForm(extra: Record<string, string>) { if (!this.hiddenFields) throw new Error('Hidden ASP.NET fields not initialized'); const form = new URLSearchParams({ __VIEWSTATE: this.hiddenFields.__VIEWSTATE, __EVENTVALIDATION: this.hiddenFields.__EVENTVALIDATION, ...extra }); if (this.hiddenFields.__VIEWSTATEGENERATOR) form.set('__VIEWSTATEGENERATOR', this.hiddenFields.__VIEWSTATEGENERATOR); return form; }
   private refreshHiddenFields(html: string) { try { this.hiddenFields = extractHiddenFields(html); } catch { /* expected for panel responses */ } }
+  private async postWithSession(path: string, form: URLSearchParams) {
+    this.ensureExternalCookie();
+    const res = await fetch(`${NETNUTRITION_BASE}/${path}`, {
+      method: 'POST',
+      headers: {
+        'user-agent': USER_AGENT,
+        accept: 'application/json,text/html,*/*',
+        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'x-requested-with': 'XMLHttpRequest',
+        origin: NETNUTRITION_ROOT,
+        referer: `${NETNUTRITION_BASE}#`,
+        cookie: cookieHeader(this.cookieJar),
+      },
+      body: form.toString(),
+    });
+    const text = await res.text();
+    collectCookies(res.headers, this.cookieJar);
+    this.ensureExternalCookie();
+    this.refreshHiddenFields(text);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return text;
+  }
   async postWithRetry(path: string, data: Record<string, string>) {
     let lastErr: unknown;
     for (let i = 1; i <= RETRIES; i++) {
       try {
         const form = this.buildForm(data);
-        this.ensureExternalCookie();
-        const res = await fetch(`${NETNUTRITION_BASE}/${path}`, {
-          method: 'POST',
-          headers: {
-            'user-agent': USER_AGENT,
-            accept: 'application/json,text/html,*/*',
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'x-requested-with': 'XMLHttpRequest',
-            origin: NETNUTRITION_ROOT,
-            referer: `${NETNUTRITION_BASE}#`,
-            cookie: cookieHeader(this.cookieJar),
-          },
-          body: form.toString(),
-        });
-        const text = await res.text();
-        parseSetCookie(res.headers, this.cookieJar);
-        this.ensureExternalCookie();
-        this.refreshHiddenFields(text);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await this.postWithSession(path, form);
         if (isStartupError(text)) {
           console.warn(`Startup error on ${path}; refreshing session and retrying`);
           await this.initSession();
@@ -439,10 +453,17 @@ async function readCachedResponse(supabase: ReturnType<typeof getSupabaseAdmin>)
   return {
     halls: halls.map((hall) => ({
       name: hall.name,
-      categories: cats.filter((c) => c.hall_id === hall.id).map((c) => ({
-        name: c.name,
-        items: items.filter((i) => i.category_id === c.id).map((item) => ({ name: item.name, calories: factsMap.get(item.id)?.calories ?? null, protein: factsMap.get(item.id)?.protein ?? null, carbs: factsMap.get(item.id)?.carbs ?? null, fat: factsMap.get(item.id)?.fat ?? null })),
-      })),
+      stations: [
+        {
+          name: hall.name,
+          categories: cats
+            .filter((c) => c.hall_id === hall.id)
+            .map((c) => ({
+              name: c.name,
+              items: items.filter((i) => i.category_id === c.id).map((item) => ({ name: item.name, calories: factsMap.get(item.id)?.calories ?? null, protein: factsMap.get(item.id)?.protein ?? null, carbs: factsMap.get(item.id)?.carbs ?? null, fat: factsMap.get(item.id)?.fat ?? null })),
+            })),
+        },
+      ],
     })),
     last_updated,
   };
@@ -452,23 +473,41 @@ const isCacheFresh = (lastUpdated: string | null) => !!lastUpdated && (Date.now(
 
 async function upsertScrapeData(supabase: ReturnType<typeof getSupabaseAdmin>, halls: ScrapeHall[], updatedAt: string) {
   const hallRows = halls.map((h) => ({ id: h.id, name: h.name }));
-  const catRows = halls.flatMap((h) => h.categories.map((c) => ({ id: c.id, hall_id: c.hallId, name: c.name })));
-  const itemRows = halls.flatMap((h) => h.categories.flatMap((c) => c.items.map((i) => ({
+  const catRows = halls.flatMap((h) => h.stations.flatMap((s) => s.categories.map((c) => ({ id: c.id, hall_id: c.hallId, name: `${s.name} :: ${c.name}` }))));
+  const itemRows = halls.flatMap((h) => h.stations.flatMap((s) => s.categories.flatMap((c) => c.items.map((i) => ({
     id: i.id,
     category_id: c.id,
     name: i.name,
     allergens: i.allergens ?? [],
     dietary_flags: i.dietaryFlags ?? [],
-  }))));
-  const factRows = halls.flatMap((h) => h.categories.flatMap((c) => c.items.map((i) => ({ id: `nf_${i.id}`, item_id: i.id, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat, raw_label_json: i.rawLabel }))));
+  })))));
+  const factRows = halls.flatMap((h) => h.stations.flatMap((s) => s.categories.flatMap((c) => c.items.map((i) => ({ id: `nf_${i.id}`, item_id: i.id, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat, raw_label_json: i.rawLabel })))));
   if (hallRows.length) { const { error } = await supabase.from('dining_halls').upsert(hallRows, { onConflict: 'id' }); if (error) throw error; }
-  if (catRows.length) { const { error } = await supabase.from('menu_categories').upsert(catRows, { onConflict: 'id' }); if (error) throw error; }
-  if (itemRows.length) { const { error } = await supabase.from('food_items').upsert(itemRows, { onConflict: 'id' }); if (error) throw error; }
-  if (factRows.length) { const { error } = await supabase.from('nutrition_facts').upsert(factRows, { onConflict: 'id' }); if (error) throw error; }
+  try {
+    if (catRows.length) { const { error } = await supabase.from('menu_categories').upsert(catRows, { onConflict: 'id' }); if (error) throw error; }
+    if (itemRows.length) { const { error } = await supabase.from('food_items').upsert(itemRows, { onConflict: 'id' }); if (error) throw error; }
+    if (factRows.length) { const { error } = await supabase.from('nutrition_facts').upsert(factRows, { onConflict: 'id' }); if (error) throw error; }
+  } catch (error) {
+    console.warn('Category-aware tables unavailable; persisted halls only and keeping grouped payload in response.', error);
+  }
   const { error: mErr } = await supabase.from('metadata').upsert({ id: 1, last_updated: updatedAt }, { onConflict: 'id' }); if (mErr) throw mErr;
 }
 
-function asMenuResponse(halls: ScrapeHall[], last_updated: string): MenuResponse { return { halls: halls.map((h) => ({ name: h.name, categories: h.categories.map((c) => ({ name: c.name, items: c.items.map((i) => ({ name: i.name, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat })) })) })), last_updated }; }
+function asMenuResponse(halls: ScrapeHall[], last_updated: string): MenuResponse {
+  return {
+    halls: halls.map((h) => ({
+      name: h.name,
+      stations: h.stations.map((s) => ({
+        name: s.name,
+        categories: s.categories.map((c) => ({
+          name: c.name,
+          items: c.items.map((i) => ({ name: i.name, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat })),
+        })),
+      })),
+    })),
+    last_updated,
+  };
+}
 
 async function scrapeAllHalls(): Promise<ScrapeHall[]> {
   const client = new NetNutritionClient(); const { units } = await client.getHomepage(); const halls: ScrapeHall[] = [];
@@ -488,24 +527,28 @@ async function scrapeAllHalls(): Promise<ScrapeHall[]> {
       if (!nextState) throw new Error(`Unable to select child unit for ${unit.name}`);
       state = nextState;
     }
-    const categories: ScrapeCategory[] = [];
+    const stations: ScrapeStation[] = [];
     if (state.panelType === 'menuPanel') {
+      const station: ScrapeStation = { id: `station_${unit.id}`, hallId: unit.id, name: unit.name, categories: [] };
       for (const menu of parseMenus(state.html || state.mergedHtml)) {
         const menuState = await client.selectMenu(menu.id); const items = parseItems(menuState.html || menuState.mergedHtml);
-        const category: ScrapeCategory = { id: `menu_${menu.id}`, hallId: unit.id, name: menu.name, items: [] };
+        const category: ScrapeCategory = { id: `menu_${menu.id}`, hallId: unit.id, stationId: station.id, name: menu.name, items: [] };
         for (const item of items) {
           const nutrition = await client.nutritionForItem(item.id, menu.id);
           category.items.push({ id: `item_${item.id}`, name: item.name, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, rawLabel: nutrition.raw });
         }
-        categories.push(category);
+        station.categories.push(category);
       }
+      stations.push(station);
     } else if (state.panelType === 'itemPanel') {
+      const station: ScrapeStation = { id: `station_${unit.id}`, hallId: unit.id, name: unit.name, categories: [] };
       const stationCategories = parseStationCategoriesFromItemPanel(state.html || state.mergedHtml);
       if (stationCategories.length) {
         for (const [index, stationCategory] of stationCategories.entries()) {
           const category: ScrapeCategory = {
             id: `menu_${unit.id}_${index + 1}`,
             hallId: unit.id,
+            stationId: station.id,
             name: stationCategory.name,
             items: [],
           };
@@ -528,20 +571,21 @@ async function scrapeAllHalls(): Promise<ScrapeHall[]> {
               },
             });
           }
-          if (category.items.length) categories.push(category);
+          if (category.items.length) station.categories.push(category);
         }
       } else {
-        const category: ScrapeCategory = { id: `menu_${unit.id}_default`, hallId: unit.id, name: 'All Items', items: [] };
+        const category: ScrapeCategory = { id: `menu_${unit.id}_default`, hallId: unit.id, stationId: station.id, name: 'All Items', items: [] };
         for (const item of parseItems(state.html || state.mergedHtml)) {
           const nutrition = await client.nutritionForItem(item.id);
           category.items.push({ id: `item_${item.id}`, name: item.name, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, rawLabel: nutrition.raw });
         }
-        categories.push(category);
+        station.categories.push(category);
       }
+      stations.push(station);
     } else {
       throw new Error(`Could not reach menuPanel/itemPanel for ${unit.name}`);
     }
-    halls.push({ id: unit.id, name: unit.name, categories });
+    halls.push({ id: unit.id, name: unit.name, stations });
   }
   return halls;
 }
