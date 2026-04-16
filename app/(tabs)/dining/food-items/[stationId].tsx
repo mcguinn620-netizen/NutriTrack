@@ -115,7 +115,7 @@ export default function FoodItemsScreen() {
           <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
         ) : null}
         {isOfflineFallback ? (
-          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}> 
+          <View style={[styles.banner, { backgroundColor: colors.secondaryAccent, borderColor: colors.info }]}> 
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
           </View>
         ) : null}
