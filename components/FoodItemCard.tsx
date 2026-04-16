@@ -132,7 +132,7 @@ export default function FoodItemCard({
 
           {calories !== '—' ? (
             <View style={styles.calorieBadgeWrap}>
-              <InfoChip label={`${calories} cal`} />
+              <InfoChip label={`${calories} cal`} variant="info" />
             </View>
           ) : null}
 
@@ -147,10 +147,16 @@ export default function FoodItemCard({
             <View style={styles.compactActionRow}>
               <Pressable
                 onPress={() => (inTray ? onRemoveFromTray(item.id) : onAddToTray(item))}
-                style={[styles.trayButton, { borderColor: colors.border, backgroundColor: colors.surfaceHover }]}
+                style={[
+                  styles.trayButton,
+                  {
+                    borderColor: inTray ? colors.border : colors.primary,
+                    backgroundColor: inTray ? colors.surfaceHover : colors.primary,
+                  },
+                ]}
               >
-                <MaterialIcons name={inTray ? 'remove-shopping-cart' : 'add-shopping-cart'} size={16} color={colors.textSecondary} />
-                <Text style={[styles.trayButtonText, { color: colors.textSecondary }]}>{inTray ? 'Remove Tray' : 'Add to Tray'}</Text>
+                <MaterialIcons name={inTray ? 'remove-shopping-cart' : 'add-shopping-cart'} size={16} color={inTray ? colors.textSecondary : '#FFFFFF'} />
+                <Text style={[styles.trayButtonText, { color: inTray ? colors.textSecondary : '#FFFFFF' }]}>{inTray ? 'Remove Tray' : 'Add to Tray'}</Text>
               </Pressable>
             </View>
           ) : null}
@@ -158,10 +164,10 @@ export default function FoodItemCard({
 
         <View style={styles.chipsColumn}>
           {allergenChips.map((allergen) => (
-            <InfoChip key={`${item.id}-${allergen}`} label={allergen} />
+            <InfoChip key={`${item.id}-${allergen}`} label={allergen} variant="allergen" />
           ))}
           {flagChips.map((flag) => (
-            <InfoChip key={`${item.id}-${flag}`} label={flag} />
+            <InfoChip key={`${item.id}-${flag}`} label={flag} variant="dietary" />
           ))}
           {hiddenChipCount > 0 ? <InfoChip label={`+${hiddenChipCount} more`} /> : null}
         </View>

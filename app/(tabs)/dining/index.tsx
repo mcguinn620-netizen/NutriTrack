@@ -39,7 +39,7 @@ export default function DiningHallsScreen() {
           <Text style={[styles.lastUpdated, { color: colors.textLight }]}>Last updated: {lastUpdatedLabel}</Text>
         ) : null}
         {isOfflineFallback ? (
-          <View style={[styles.banner, { backgroundColor: colors.surfaceHover, borderColor: colors.border }]}> 
+          <View style={[styles.banner, { backgroundColor: colors.secondaryAccent, borderColor: colors.info }]}> 
             <Text style={[styles.bannerText, { color: colors.textSecondary }]}>Offline – showing last saved data</Text>
           </View>
         ) : null}
@@ -103,7 +103,7 @@ export default function DiningHallsScreen() {
                 onPress={() => router.push(`/dining/stations/${item.id}?hallName=${encodeURIComponent(item.name)}`)}
               >
                 <View style={styles.cardHeader}>
-                  <View style={[styles.iconBadge, { backgroundColor: colors.surfaceHover }]}>
+                  <View style={[styles.iconBadge, { backgroundColor: colors.secondaryAccent }]}>
                     <MaterialIcons name="apartment" size={18} color={colors.primary} />
                   </View>
                   <MaterialIcons name="chevron-right" size={20} color={colors.textLight} />
