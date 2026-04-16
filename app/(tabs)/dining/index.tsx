@@ -73,7 +73,29 @@ export default function DiningHallsScreen() {
           contentContainerStyle={styles.listContent}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
           renderItem={({ item }) => {
-            const stationCount = (item as { station_count?: number }).station_count;
+            const stationCountCandidates = item as {
+              station_count?: number | string | null;
+              stationCount?: number | string | null;
+              stations_count?: number | string | null;
+              stations?: unknown[] | null;
+            };
+            const normalizedStationCount = [
+              stationCountCandidates.station_count,
+              stationCountCandidates.stationCount,
+              stationCountCandidates.stations_count,
+            ]
+              .map((value) => (typeof value === 'string' ? Number(value) : value))
+              .find((value): value is number => typeof value === 'number' && Number.isFinite(value));
+            const stationCount = typeof normalizedStationCount === 'number'
+              ? normalizedStationCount
+              : Array.isArray(stationCountCandidates.stations)
+                ? stationCountCandidates.stations.length
+                : null;
+            const stationCountLabel = stationCount == null
+              ? 'Stations not loaded'
+              : stationCount === 0
+                ? 'No stations listed'
+                : `${stationCount} stations`;
 
             return (
               <CardSurface
@@ -90,7 +112,7 @@ export default function DiningHallsScreen() {
                 <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>Fresh menus and nutrition details</Text>
                 <MetaRow
                   icon="restaurant"
-                  text={typeof stationCount === 'number' ? `${stationCount} stations` : 'Station count unavailable'}
+                  text={stationCountLabel}
                   right={<Text style={[styles.metaHint, { color: colors.textLight }]}>Open</Text>}
                 />
               </CardSurface>
