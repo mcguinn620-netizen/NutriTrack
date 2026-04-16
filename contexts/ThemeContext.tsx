@@ -10,8 +10,6 @@ export interface ColorPalette {
   primary: string;
   primaryDark: string;
   secondary: string;
-  info: string;
-  secondaryAccent: string;
   background: string;
   surface: string;
   surfaceHover: string;
@@ -27,60 +25,50 @@ export interface ColorPalette {
   carbs: string;
   fat: string;
   calories: string;
-  allergenChip: string;
-  dietaryChip: string;
   cardShadow: string;
 }
 
 export const lightColors: ColorPalette = {
-  primary: '#BA0C2F',
-  primaryDark: '#8F0A25',
-  secondary: '#54585A',
-  info: '#0079A7',
-  secondaryAccent: '#AEDBE9',
-  background: '#FFFFFF',
-  surface: '#FFFFFF',
-  surfaceHover: '#F5F6F7',
-  text: '#000000',
-  textSecondary: '#54585A',
-  textLight: '#6F7375',
-  border: '#D3D5D6',
-  borderLight: '#E8EAEB',
-  error: '#BA0C2F',
-  warning: '#FDDE69',
-  success: '#BAD57E',
-  protein: '#0079A7',
-  carbs: '#AEDBE9',
-  fat: '#FDDE69',
-  calories: '#BA0C2F',
-  allergenChip: '#FDDE69',
-  dietaryChip: '#BAD57E',
+  primary: '#2563eb',
+  primaryDark: '#1d4ed8',
+  secondary: '#10b981',
+  background: '#f8fafc',
+  surface: '#ffffff',
+  surfaceHover: '#f1f5f9',
+  text: '#0f172a',
+  textSecondary: '#64748b',
+  textLight: '#94a3b8',
+  border: '#e2e8f0',
+  borderLight: '#f1f5f9',
+  error: '#ef4444',
+  warning: '#f59e0b',
+  success: '#10b981',
+  protein: '#ec4899',
+  carbs: '#3b82f6',
+  fat: '#f59e0b',
+  calories: '#8b5cf6',
   cardShadow: '#000000',
 };
 
 export const darkColors: ColorPalette = {
-  primary: '#BA0C2F',
-  primaryDark: '#8F0A25',
-  secondary: '#9FA3A5',
-  info: '#AEDBE9',
-  secondaryAccent: '#0079A7',
-  background: '#121212',
-  surface: '#1D1D1D',
-  surfaceHover: '#2A2A2A',
-  text: '#FFFFFF',
-  textSecondary: '#CFD1D2',
-  textLight: '#9FA3A5',
-  border: '#3A3A3A',
-  borderLight: '#2E2E2E',
-  error: '#BA0C2F',
-  warning: '#FDDE69',
-  success: '#BAD57E',
-  protein: '#AEDBE9',
-  carbs: '#0079A7',
-  fat: '#FDDE69',
-  calories: '#BA0C2F',
-  allergenChip: '#7E6A21',
-  dietaryChip: '#4E6730',
+  primary: '#3b82f6',
+  primaryDark: '#2563eb',
+  secondary: '#10b981',
+  background: '#0f172a',
+  surface: '#1e293b',
+  surfaceHover: '#2d3f55',
+  text: '#f1f5f9',
+  textSecondary: '#94a3b8',
+  textLight: '#64748b',
+  border: '#334155',
+  borderLight: '#1e293b',
+  error: '#f87171',
+  warning: '#fbbf24',
+  success: '#34d399',
+  protein: '#f472b6',
+  carbs: '#60a5fa',
+  fat: '#fbbf24',
+  calories: '#a78bfa',
   cardShadow: '#000000',
 };
 

@@ -4,37 +4,11 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 
-type InfoChipVariant = 'neutral' | 'allergen' | 'dietary' | 'info';
-
-export function InfoChip({ label, variant = 'neutral' }: { label: string; variant?: InfoChipVariant }) {
-  const { colors, isDark } = useTheme();
-
-  const chipStyles = {
-    neutral: {
-      borderColor: colors.border,
-      backgroundColor: colors.surfaceHover,
-      textColor: colors.textSecondary,
-    },
-    allergen: {
-      borderColor: colors.warning,
-      backgroundColor: isDark ? colors.allergenChip : colors.warning,
-      textColor: '#000000',
-    },
-    dietary: {
-      borderColor: colors.success,
-      backgroundColor: isDark ? colors.dietaryChip : colors.success,
-      textColor: '#000000',
-    },
-    info: {
-      borderColor: colors.secondaryAccent,
-      backgroundColor: isDark ? colors.info : colors.secondaryAccent,
-      textColor: isDark ? '#FFFFFF' : colors.text,
-    },
-  }[variant];
-
+export function InfoChip({ label }: { label: string }) {
+  const { colors } = useTheme();
   return (
-    <View style={[styles.chip, { borderColor: chipStyles.borderColor, backgroundColor: chipStyles.backgroundColor }]}> 
-      <Text style={[styles.chipText, { color: chipStyles.textColor }]} numberOfLines={1}>{label}</Text>
+    <View style={[styles.chip, { borderColor: colors.border, backgroundColor: colors.surfaceHover }]}> 
+      <Text style={[styles.chipText, { color: colors.textSecondary }]} numberOfLines={1}>{label}</Text>
     </View>
   );
 }
