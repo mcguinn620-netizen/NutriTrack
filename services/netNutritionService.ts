@@ -4,7 +4,12 @@ import { supabase } from '@/services/supabaseClient';
 const cache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 7 days
 const NUTRITION_CACHE_KEY_PREFIX = 'nutrition_cache:';
-const NUTRITION_KEY_PREFIXES = ['dining_halls', 'stations:', 'food_items:'];
+const NUTRITION_KEY_PREFIXES = [
+  'dining_halls',
+  'stations',
+  'menu_categories',
+  'food_items',
+];
 
 interface CachedPayload<T> {
   data: T;
@@ -24,31 +29,50 @@ interface QueryOptions {
 export interface DiningHall {
   id: string;
   name: string;
-  unit_oid?: number | null;
   created_at?: string | null;
 }
 
 export interface Station {
   id: string;
-  dining_hall_id: string;
   name: string;
-  unit_oid?: number | null;
+  hall_id?: string | null;
+  dining_hall_id?: string | null;
   created_at?: string | null;
+  dining_hall?: DiningHall | null;
+}
+
+export interface MenuCategory {
+  id: string;
+  name: string;
+  station_id?: string | null;
+  display_order?: number | null;
+  created_at?: string | null;
+  station?: Station | null;
 }
 
 export interface FoodItem {
   id: string;
-  station_id: string;
   name: string;
-  detail_oid?: number | null;
+  station_id: string;
+  category_id?: string | null;
+  calories?: number | null;
   serving_size: string;
+  ingredients?: string[] | null;
   allergens: string[];
+  traits: string[];
   dietary_flags: string[];
   nutrients: Record<string, unknown>;
-  ingredients?: string[] | null;
   micronutrients?: Record<string, unknown> | null;
   created_at?: string | null;
   updated_at?: string | null;
+  station?: {
+    id: string;
+    name: string;
+  } | null;
+  dining_hall?: {
+    id: string;
+    name: string;
+  } | null;
 }
 
 function isExpired(timestamp: number): boolean {
@@ -189,7 +213,6 @@ function normalizeStringArray(value: unknown): string[] {
   return [];
 }
 
-
 function normalizeObject(value: unknown): Record<string, unknown> | null {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -217,6 +240,7 @@ function normalizeNutrients(row: Record<string, unknown>): Record<string, unknow
   if (fromJson && typeof fromJson === 'object' && !Array.isArray(fromJson)) {
     return fromJson as Record<string, unknown>;
   }
+
   if (typeof fromJson === 'string') {
     const trimmed = fromJson.trim();
     if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
@@ -226,7 +250,7 @@ function normalizeNutrients(row: Record<string, unknown>): Record<string, unknow
           return parsed as Record<string, unknown>;
         }
       } catch {
-        // Fall back to legacy nutrient mapping
+        // fall through to legacy mapping
       }
     }
   }
@@ -243,22 +267,108 @@ function normalizeNutrients(row: Record<string, unknown>): Record<string, unknow
   };
 }
 
-function mapFoodItem(row: Record<string, unknown>): FoodItem {
-  const ingredients = normalizeStringArray(row.ingredients);
+function mapDiningHall(row: Record<string, unknown>): DiningHall {
+  return {
+    id: String(row.id ?? ''),
+    name: String(row.name ?? 'Unknown Hall'),
+    created_at: row.created_at == null ? null : String(row.created_at),
+  };
+}
+
+function mapStation(row: Record<string, unknown>): Station {
+  const diningHallRelation = normalizeObject(row.dining_halls ?? row.dining_hall);
+
+  const mappedHall = diningHallRelation
+    ? {
+        id: String(diningHallRelation.id ?? ''),
+        name: String(diningHallRelation.name ?? 'Unknown Hall'),
+        created_at: null,
+      }
+    : null;
+
+  const hallId = row.hall_id ?? row.dining_hall_id;
 
   return {
     id: String(row.id ?? ''),
-    station_id: String(row.station_id ?? ''),
+    name: String(row.name ?? 'Unknown Station'),
+    hall_id: hallId == null ? null : String(hallId),
+    dining_hall_id: row.dining_hall_id == null ? (hallId == null ? null : String(hallId)) : String(row.dining_hall_id),
+    created_at: row.created_at == null ? null : String(row.created_at),
+    dining_hall: mappedHall,
+  };
+}
+
+function mapMenuCategory(row: Record<string, unknown>): MenuCategory {
+  const stationRelation = normalizeObject(row.stations ?? row.station);
+
+  return {
+    id: String(row.id ?? ''),
+    name: String(row.name ?? 'Unknown Category'),
+    station_id: row.station_id == null ? null : String(row.station_id),
+    display_order: row.display_order == null ? null : Number(row.display_order),
+    created_at: row.created_at == null ? null : String(row.created_at),
+    station: stationRelation
+      ? {
+          id: String(stationRelation.id ?? ''),
+          name: String(stationRelation.name ?? 'Unknown Station'),
+          hall_id:
+            stationRelation.hall_id == null
+              ? stationRelation.dining_hall_id == null
+                ? null
+                : String(stationRelation.dining_hall_id)
+              : String(stationRelation.hall_id),
+          dining_hall_id:
+            stationRelation.dining_hall_id == null
+              ? stationRelation.hall_id == null
+                ? null
+                : String(stationRelation.hall_id)
+              : String(stationRelation.dining_hall_id),
+          created_at: null,
+          dining_hall: null,
+        }
+      : null,
+  };
+}
+
+function mapFoodItem(row: Record<string, unknown>): FoodItem {
+  const ingredients = normalizeStringArray(row.ingredients);
+  const stationRelation = normalizeObject(row.stations ?? row.station);
+  const hallRelation = stationRelation
+    ? normalizeObject(stationRelation.dining_halls ?? stationRelation.dining_hall)
+    : null;
+
+  return {
+    id: String(row.id ?? ''),
     name: String(row.name ?? 'Unknown Item'),
-    detail_oid: row.detail_oid == null ? null : Number(row.detail_oid),
-    serving_size: String(row.serving_size ?? row.serving ?? 'N/A'),
+    station_id: String(row.station_id ?? ''),
+    category_id: row.category_id == null ? null : String(row.category_id),
+    calories: row.calories == null ? null : Number(row.calories),
+    serving_size:
+      row.serving_size == null
+        ? row.serving == null
+          ? 'N/A'
+          : String(row.serving)
+        : String(row.serving_size),
     allergens: normalizeStringArray(row.allergens),
+    traits: normalizeStringArray(row.traits ?? row.dietary_flags ?? row.dietary_restrictions),
     dietary_flags: normalizeStringArray(row.dietary_flags ?? row.dietary_restrictions),
     nutrients: normalizeNutrients(row),
     ingredients: ingredients.length ? ingredients : null,
     micronutrients: normalizeObject(row.micronutrients),
     created_at: row.created_at == null ? null : String(row.created_at),
     updated_at: row.updated_at == null ? null : String(row.updated_at),
+    station: stationRelation
+      ? {
+          id: String(stationRelation.id ?? ''),
+          name: String(stationRelation.name ?? 'Unknown Station'),
+        }
+      : null,
+    dining_hall: hallRelation
+      ? {
+          id: String(hallRelation.id ?? ''),
+          name: String(hallRelation.name ?? 'Unknown Hall'),
+        }
+      : null,
   };
 }
 
@@ -301,41 +411,37 @@ async function fetchWithCacheFallback<T>(
 }
 
 export async function getDiningHallsResult(options?: QueryOptions): Promise<NetNutritionResult<DiningHall[]>> {
-  const tableName = 'dining_halls';
-  const cacheKey = 'dining_halls';
-
   return fetchWithCacheFallback<DiningHall[]>(
-    cacheKey,
+    'dining_halls',
+    async () => {
+      const { data, error } = await supabase.from('dining_halls').select('*').order('name', { ascending: true });
+
+      if (error) {
+        console.error('[netNutritionService] getDiningHalls failed:', error);
+        throw new Error(error.message || 'Failed to load dining halls');
+      }
+
+      return (data ?? []).map((row) => mapDiningHall(row as Record<string, unknown>));
+    },
+    options,
+  );
+}
+
+export async function getStationsResult(options?: QueryOptions): Promise<NetNutritionResult<Station[]>> {
+  return fetchWithCacheFallback<Station[]>(
+    'stations:all',
     async () => {
       const { data, error } = await supabase
-        .from(tableName)
-        .select('id,name,unit_oid,created_at')
+        .from('stations')
+        .select('*, dining_halls(id,name)')
         .order('name', { ascending: true });
 
       if (error) {
-        const resolvedMessage = error.message || 'Unknown Supabase error';
-        const code = 'code' in error ? error.code : undefined;
-        const details = 'details' in error ? error.details : undefined;
-        const hint = 'hint' in error ? error.hint : undefined;
-        console.error('[netNutritionService] getDiningHalls failed:', {
-          tableName,
-          filterColumn: null,
-          filterValue: null,
-          error,
-          message: resolvedMessage,
-          code,
-          details,
-          hint,
-        });
-        throw new Error(resolvedMessage);
+        console.error('[netNutritionService] getStations failed:', error);
+        throw new Error(error.message || 'Failed to load stations');
       }
 
-      return (data ?? []).map((hall) => ({
-        id: String(hall.id),
-        name: String(hall.name ?? 'Unknown Hall'),
-        unit_oid: hall.unit_oid == null ? null : Number(hall.unit_oid),
-        created_at: hall.created_at == null ? null : String(hall.created_at),
-      }));
+      return (data ?? []).map((row) => mapStation(row as Record<string, unknown>));
     },
     options,
   );
@@ -345,34 +451,99 @@ export async function getStationsByHallResult(
   hallId: string,
   options?: QueryOptions,
 ): Promise<NetNutritionResult<Station[]>> {
-  const cacheKey = `stations:${hallId}`;
-
   return fetchWithCacheFallback<Station[]>(
-    cacheKey,
+    `stations:${hallId}`,
     async () => {
-      const { data, error } = await supabase
+      const byDiningHallId = await supabase
         .from('stations')
-        .select('id,dining_hall_id,name,unit_oid,created_at')
+        .select('*, dining_halls(id,name)')
         .eq('dining_hall_id', hallId)
         .order('name', { ascending: true });
 
-      if (error) {
-        console.error('[netNutritionService] getStationsByHall failed:', {
-          tableName: 'stations',
-          filterColumn: 'dining_hall_id',
-          filterValue: hallId,
-          error,
-        });
-        throw error;
+      if (!byDiningHallId.error) {
+        return (byDiningHallId.data ?? []).map((row) => mapStation(row as Record<string, unknown>));
       }
 
-      return (data ?? []).map((station) => ({
-        id: String(station.id),
-        dining_hall_id: String(station.dining_hall_id),
-        name: String(station.name ?? 'Unknown Station'),
-        unit_oid: station.unit_oid == null ? null : Number(station.unit_oid),
-        created_at: station.created_at == null ? null : String(station.created_at),
-      }));
+      const byHallId = await supabase
+        .from('stations')
+        .select('*, dining_halls(id,name)')
+        .eq('hall_id', hallId)
+        .order('name', { ascending: true });
+
+      if (byHallId.error) {
+        console.error('[netNutritionService] getStationsByHall failed:', {
+          hallId,
+          dining_hall_id_error: byDiningHallId.error,
+          hall_id_error: byHallId.error,
+        });
+        throw new Error(byHallId.error.message || byDiningHallId.error.message || 'Failed to load stations');
+      }
+
+      return (byHallId.data ?? []).map((row) => mapStation(row as Record<string, unknown>));
+    },
+    options,
+  );
+}
+
+export async function getMenuCategoriesResult(options?: QueryOptions): Promise<NetNutritionResult<MenuCategory[]>> {
+  return fetchWithCacheFallback<MenuCategory[]>(
+    'menu_categories:all',
+    async () => {
+      const { data, error } = await supabase
+        .from('menu_categories')
+        .select('*, stations(id,name,hall_id,dining_hall_id)')
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('[netNutritionService] getMenuCategories failed:', error);
+        throw new Error(error.message || 'Failed to load menu categories');
+      }
+
+      return (data ?? []).map((row) => mapMenuCategory(row as Record<string, unknown>));
+    },
+    options,
+  );
+}
+
+export async function getFoodItemsResult(options?: QueryOptions): Promise<NetNutritionResult<FoodItem[]>> {
+  return fetchWithCacheFallback<FoodItem[]>(
+    'food_items:all',
+    async () => {
+      const { data, error } = await supabase
+        .from('food_items')
+        .select('*, stations(id,name,dining_halls(id,name))')
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('[netNutritionService] getFoodItems failed:', error);
+        throw new Error(error.message || 'Failed to load food items');
+      }
+
+      return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
+    },
+    options,
+  );
+}
+
+export async function getFoodItemsByHallResult(
+  hallId: string,
+  options?: QueryOptions,
+): Promise<NetNutritionResult<FoodItem[]>> {
+  return fetchWithCacheFallback<FoodItem[]>(
+    `food_items:hall:${hallId}`,
+    async () => {
+      const { data, error } = await supabase
+        .from('food_items')
+        .select('*, stations!inner(id,name,hall_id,dining_hall_id,dining_halls(id,name))')
+        .or(`hall_id.eq.${hallId},dining_hall_id.eq.${hallId}`, { foreignTable: 'stations' })
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('[netNutritionService] getFoodItemsByHall failed:', error);
+        throw new Error(error.message || 'Failed to load hall food items');
+      }
+
+      return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
     },
     options,
   );
@@ -382,25 +553,42 @@ export async function getFoodItemsByStationResult(
   stationId: string,
   options?: QueryOptions,
 ): Promise<NetNutritionResult<FoodItem[]>> {
-  const cacheKey = `food_items:${stationId}`;
-
   return fetchWithCacheFallback<FoodItem[]>(
-    cacheKey,
+    `food_items:station:${stationId}`,
     async () => {
       const { data, error } = await supabase
         .from('food_items')
-        .select('*')
+        .select('*, stations(id,name,dining_halls(id,name))')
         .eq('station_id', stationId)
         .order('name', { ascending: true });
 
       if (error) {
-        console.error('[netNutritionService] getFoodItemsByStation failed:', {
-          tableName: 'food_items',
-          filterColumn: 'station_id',
-          filterValue: stationId,
-          error,
-        });
-        throw error;
+        console.error('[netNutritionService] getFoodItemsByStation failed:', error);
+        throw new Error(error.message || 'Failed to load station food items');
+      }
+
+      return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
+    },
+    options,
+  );
+}
+
+export async function getFoodItemsByCategoryResult(
+  categoryId: string,
+  options?: QueryOptions,
+): Promise<NetNutritionResult<FoodItem[]>> {
+  return fetchWithCacheFallback<FoodItem[]>(
+    `food_items:category:${categoryId}`,
+    async () => {
+      const { data, error } = await supabase
+        .from('food_items')
+        .select('*, stations(id,name,dining_halls(id,name))')
+        .eq('category_id', categoryId)
+        .order('name', { ascending: true });
+
+      if (error) {
+        console.error('[netNutritionService] getFoodItemsByCategory failed:', error);
+        throw new Error(error.message || 'Failed to load category food items');
       }
 
       return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));
@@ -414,14 +602,50 @@ export async function getDiningHalls(options?: QueryOptions): Promise<DiningHall
   return result.data;
 }
 
+export async function getStations(options?: QueryOptions): Promise<Station[]> {
+  const result = await getStationsResult(options);
+  return result.data;
+}
+
 export async function getStationsByHall(hallId: string, options?: QueryOptions): Promise<Station[]> {
   const result = await getStationsByHallResult(hallId, options);
+  return result.data;
+}
+
+export async function getMenuCategories(options?: QueryOptions): Promise<MenuCategory[]> {
+  const result = await getMenuCategoriesResult(options);
+  return result.data;
+}
+
+export async function getFoodItems(options?: QueryOptions): Promise<FoodItem[]> {
+  const result = await getFoodItemsResult(options);
+  return result.data;
+}
+
+export async function getFoodItemsByHall(hallId: string, options?: QueryOptions): Promise<FoodItem[]> {
+  const result = await getFoodItemsByHallResult(hallId, options);
   return result.data;
 }
 
 export async function getFoodItemsByStation(stationId: string, options?: QueryOptions): Promise<FoodItem[]> {
   const result = await getFoodItemsByStationResult(stationId, options);
   return result.data;
+}
+
+export async function getFoodItemsByCategory(categoryId: string, options?: QueryOptions): Promise<FoodItem[]> {
+  const result = await getFoodItemsByCategoryResult(categoryId, options);
+  return result.data;
+}
+
+export async function triggerScrape(): Promise<boolean> {
+  const { error } = await supabase.functions.invoke('netnutrition-scrape');
+
+  if (error) {
+    console.error('[netNutritionService] triggerScrape failed:', error);
+    throw new Error(error.message || 'Failed to trigger scrape function');
+  }
+
+  return true;
 }
 
 export async function refreshFromDatabase(): Promise<boolean> {
@@ -435,12 +659,12 @@ export async function getFoodItemsByIds(ids: string[]): Promise<FoodItem[]> {
 
   const { data, error } = await supabase
     .from('food_items')
-    .select('*')
+    .select('*, stations(id,name,dining_halls(id,name))')
     .in('id', uniqueIds);
 
   if (error) {
     console.error('[netNutritionService] getFoodItemsByIds failed:', error);
-    throw error;
+    throw new Error(error.message || 'Failed to load selected food items');
   }
 
   return (data ?? []).map((row) => mapFoodItem(row as Record<string, unknown>));

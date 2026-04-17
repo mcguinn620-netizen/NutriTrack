@@ -4,15 +4,15 @@ NutriTrack is an Expo + React Native app powered entirely by Supabase.
 
 ## Architecture
 
-App (Expo / React Native) → Supabase Edge Function (`menu`) → Supabase Database → App queries data from `food_items`.
+App (Expo / React Native) → Supabase Edge Function (`netnutrition-scrape`) → Supabase Database → App queries read-only data from `dining_halls`, `stations`, `menu_categories`, and `food_items`.
 
 ## Environment
 
-Create `.env` with only:
+For now, Supabase credentials are centralized in `services/supabaseClient.ts` to keep builds stable. Plan to move to:
 
 ```bash
-EXPO_PUBLIC_SUPABASE_URL=https://upjotaeatvessmbrorgx.supabase.co
-EXPO_PUBLIC_SUPABASE_ANON_KEY=sb_publishable_hFKJ7yVVcObiQ_A4ukfUjw_raclp5di
+EXPO_PUBLIC_SUPABASE_URL=https://drtuuuqtgihqvzcripec.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=<project anon key>
 ```
 
 ## Local development
@@ -30,10 +30,10 @@ npm run web
 - Trigger scraper:
 
 ```ts
-await supabase.functions.invoke('menu');
+await supabase.functions.invoke('netnutrition-scrape');
 ```
 
-- Read menu data:
+- Read menu data with relations:
 
 ```ts
 const { data, error } = await supabase
