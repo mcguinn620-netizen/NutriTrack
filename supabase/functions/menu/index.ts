@@ -257,86 +257,6 @@ function parseFoodItems(html: string): ParsedFoodItem[] {
   return items;
 }
 
-/** Parse nutrition facts from the nutrition label HTML. */
-function parseNutrients(html: string): Record<string, string> {
-  const nutrients: Record<string, string> = {};
-
-  // Serving size from label
-  const servingMatch = html.match(/Serving Size:(?:&nbsp;|\s)*([^<]+)/i);
-  if (servingMatch) {
-    nutrients["Serving Size"] = servingMatch[1]
-      .replace(/&nbsp;/g, " ")
-      .trim();
-  }
-
-  // Calories
-  const calMatch = html.match(
-    />Calories<\/span>(?:&nbsp;|\s)*<span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/i,
-  );
-  if (calMatch) {
-    nutrients["Calories"] = calMatch[1].replace(/&nbsp;/g, "").trim();
-  }
-
-  // Calories from Fat
-  const calFatMatch = html.match(
-    /Calories from Fat(?:&nbsp;|\s)*<span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/i,
-  );
-  if (calFatMatch) {
-    nutrients["Calories from Fat"] = calFatMatch[1]
-      .replace(/&nbsp;/g, "")
-      .trim();
-  }
-
-  // Main nutrients (bold)
-  const mainRegex =
-    /font-weight:\s*bold;?\s*'>\s*([^<]+)<\/span><\/td><td><span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/gi;
-  let mainMatch;
-  while ((mainMatch = mainRegex.exec(html)) !== null) {
-    const label = mainMatch[1].trim();
-    const value = mainMatch[2].replace(/&nbsp;/g, "").trim();
-    if (label && value && label !== "Calories") {
-      nutrients[label] = value;
-    }
-  }
-
-  // Sub-nutrients (normal weight)
-  const subRegex =
-    /font-weight:\s*normal;?\s*'>\s*([^<]+)<\/span><\/td><td><span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/gi;
-  let subMatch;
-  while ((subMatch = subRegex.exec(html)) !== null) {
-    const label = subMatch[1].trim();
-    const value = subMatch[2].replace(/&nbsp;/g, "").trim();
-    if (label && value) {
-      nutrients[label] = value;
-    }
-  }
-
-  // Secondary nutrients (vitamins etc)
-  const secRegex =
-    /class='cbo_nn_SecondaryNutrientLabel'>\s*([^<]+)<\/td>\s*<td[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>\s*([^<]+)/gi;
-  let secMatch;
-  while ((secMatch = secRegex.exec(html)) !== null) {
-    const label = secMatch[1].trim();
-    const value = secMatch[2].trim();
-    if (label && value) {
-      nutrients[label] = value;
-    }
-  }
-
-  // Ingredients
-  const ingredientsMatch = html.match(
-    /class='cbo_nn_LabelIngredients'>\s*([\s\S]*?)<\/span>/i,
-  );
-  if (ingredientsMatch) {
-    nutrients["Ingredients"] = ingredientsMatch[1]
-      .replace(/&nbsp;/g, " ")
-      .replace(/<[^>]+>/g, "")
-      .trim();
-  }
-
-  return nutrients;
-}
-
 /** Upsert a food item into the database. */
 async function upsertItem(
   supabase: ReturnType<typeof createClient>,
@@ -722,7 +642,7 @@ Deno.serve(async (req) => {
         status: "error",
         message: error instanceof Error ? error.message : "Unknown error",
       });
-    } catch (_) {
+    } catch {
       // ignore logging error
     }
 

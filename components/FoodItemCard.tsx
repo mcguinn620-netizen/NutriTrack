@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { borderRadius, spacing, typography } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
-import { FoodItem } from '@/services/netNutritionService';
+import { FoodItem } from '@/services/nutritionTypes';
 import { MealCategory } from '@/services/mealLogService';
 import FavoriteButton from '@/components/FavoriteButton';
 import CardSurface from '@/components/ui/CardSurface';

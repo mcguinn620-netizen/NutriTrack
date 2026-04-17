@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FoodItem } from '@/services/netNutritionService';
+import { FoodItem } from '@/services/nutritionTypes';
 import { MealCategory, MealLogEntry, mealLogService } from '@/services/mealLogService';
 
 const CATEGORIES: MealCategory[] = ['breakfast', 'lunch', 'dinner', 'snacks'];

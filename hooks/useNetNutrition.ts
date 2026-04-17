@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  DiningHall,
-  FoodItem,
-  Station,
-  getDiningHallsResult,
-  getFoodItemsByStationResult,
-  getStationsByHallResult,
-  triggerScrape,
-} from '@/services/netNutritionService';
+import { getDiningHallsResult, getFoodItemsByStationResult, getStationsByHallResult, triggerScrape } from '@/services/netNutritionService';
+import { DiningHall, FoodItem, Station } from '@/services/nutritionTypes';
 
 function resolveErrorMessage(err: unknown, fallback: string): string {
   if (err instanceof Error && err.message) {
