@@ -68,7 +68,7 @@ async function initSession(): Promise<SessionState> {
     const location = res.headers.get("location");
     if (location && res.status >= 300 && res.status < 400) {
       url = new URL(location, url).href;
-      console.log(`  Redirect ${res.status} â ${url}`);
+      console.log(`  Redirect ${res.status} -> ${url}`);
     } else {
       break;
     }
@@ -117,7 +117,7 @@ async function postWithSession(
 
   const text = await res.text();
   console.log(
-    `  POST ${path} â status ${res.status}, length ${text.length}, starts: ${text.substring(0, 120)}`,
+    `  POST ${path} -> status ${res.status}, length ${text.length}, starts: ${text.substring(0, 120)}`,
   );
 
   // Update session cookies from response
@@ -142,7 +142,7 @@ function extractPanelHtml(responseText: string, panelId: string): string {
       return panel?.html ?? "";
     }
   } catch {
-    // Not JSON â return raw for regex parsing
+    // Not JSON — return raw for regex parsing
   }
   return responseText;
 }
@@ -150,7 +150,7 @@ function extractPanelHtml(responseText: string, panelId: string): string {
 // Known dining halls with their sidebar unitOids (verified from browser captures)
 const KNOWN_HALLS = [
   { name: "The Atrium", unitOid: 1 },
-  { name: "Atrium CafÃ©", unitOid: 10 },
+  { name: "Atrium Café", unitOid: 10 },
   { name: "Noyer", unitOid: 14 },
   { name: "Student Center Tally Food Court", unitOid: 16 },
   { name: "North Dining", unitOid: 21 },
@@ -375,7 +375,7 @@ async function processItemPanel(
   return foodItems.length;
 }
 
-/** POST with session recovery â re-inits session if Start-up Error is returned. */
+/** POST with session recovery — re-inits session if Start-up Error is returned. */
 async function postWithRetry(
   session: SessionState,
   path: string,
@@ -483,7 +483,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Step 3: Select dining hall â get stations from childUnitsPanel
+      // Step 3: Select dining hall -> get stations from childUnitsPanel
       const sidebarResponse = await postWithRetry(
         session,
         "/Unit/SelectUnitFromSideBar",
@@ -637,7 +637,7 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // Step 4: Select station â get food items from itemPanel
+        // Step 4: Select station -> get food items from itemPanel
         const childResponse = await postWithRetry(
           session,
           "/Unit/SelectUnitFromChildUnitsList",
