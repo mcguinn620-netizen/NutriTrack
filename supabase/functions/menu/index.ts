@@ -1,611 +1,740 @@
-import { DOMParser } from 'https://deno.land/x/deno_dom@v0.1.56/deno-dom-wasm.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
-import { corsHeaders } from '../_shared/cors.ts';
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
-const NETNUTRITION_ROOT = 'http://netnutrition.bsu.edu';
-const NETNUTRITION_BASE = `${NETNUTRITION_ROOT}/NetNutrition/1`;
-const USER_AGENT =
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1';
-const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const RETRIES = 3;
-
-interface HiddenFields {
-  __VIEWSTATE: string;
-  __EVENTVALIDATION: string;
-  __VIEWSTATEGENERATOR?: string;
-}
-interface ScrapeItem {
-  id: string;
-  name: string;
-  calories: number | null;
-  protein: number | null;
-  carbs: number | null;
-  fat: number | null;
-  rawLabel: Record<string, unknown>;
-  allergens?: string[];
-  dietaryFlags?: string[];
-}
-interface ScrapeCategory { id: string; hallId: string; stationId: string; name: string; items: ScrapeItem[]; }
-interface ScrapeStation { id: string; hallId: string; name: string; categories: ScrapeCategory[]; }
-interface ScrapeHall { id: string; name: string; stations: ScrapeStation[]; }
-interface MenuResponse {
-  halls: Array<{
-    name: string;
-    stations: Array<{
-      name: string;
-      categories: Array<{
-        name: string;
-        items: Array<{ name: string; calories: number | null; protein: number | null; carbs: number | null; fat: number | null; }>;
-      }>;
-    }>;
-  }>;
-  last_updated: string | null;
-}
-
-function getSupabaseAdmin() {
-  const url = Deno.env.get('SUPABASE_URL') ?? 'https://upjotaeatvessmbrorgx.supabase.co';
-  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  if (!key) throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
-  return createClient(url, key, { auth: { persistSession: false } });
-}
-
-function collectCookies(headers: Headers, existing: Map<string, string>): void {
-  const combined = headers.get('set-cookie');
-  if (!combined) return;
-  const pieces = combined.split(/, (?=[^;]+=)/g);
-  for (const piece of pieces) {
-    const [cookiePart] = piece.split(';');
-    const index = cookiePart.indexOf('=');
-    if (index <= 0) continue;
-    existing.set(cookiePart.slice(0, index).trim(), cookiePart.slice(index + 1).trim());
-  }
-}
-const cookieHeader = (jar: Map<string, string>) => Array.from(jar.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
-const stripText = (v?: string | null) => (v ?? '').replace(/\s+/g, ' ').trim();
-const parseNumeric = (v?: string | null) => (v ? Number(v.replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.[0] ?? NaN) : NaN);
-function isStartupError(text: string): boolean {
-  return text.includes('NetNutrition Start-up Error') || text.includes('ANA_border');
-}
-const shortHtmlSnippet = (html: string) => stripText(html).slice(0, 320);
-
-function parseHtmlDocument(html: string) { const doc = new DOMParser().parseFromString(html, 'text/html'); if (!doc) throw new Error('HTML parse failed'); return doc; }
-function extractHiddenFields(html: string): HiddenFields {
-  const doc = parseHtmlDocument(html);
-  let __VIEWSTATE = (doc.querySelector('input[name="__VIEWSTATE"]') as any)?.getAttribute('value')
-    ?? (doc.querySelector('input[id="__VIEWSTATE"]') as any)?.getAttribute('value')
-    ?? '';
-  let __EVENTVALIDATION = (doc.querySelector('input[name="__EVENTVALIDATION"]') as any)?.getAttribute('value')
-    ?? (doc.querySelector('input[id="__EVENTVALIDATION"]') as any)?.getAttribute('value')
-    ?? '';
-  const __VIEWSTATEGENERATOR = (doc.querySelector('input[name="__VIEWSTATEGENERATOR"]') as any)?.getAttribute('value')
-    ?? (doc.querySelector('input[id="__VIEWSTATEGENERATOR"]') as any)?.getAttribute('value')
-    ?? undefined;
-
-  if (!__VIEWSTATE) {
-    const viewstateMatch = html.match(/id="__VIEWSTATE" value="([^"]+)"/i)
-      ?? html.match(/name="__VIEWSTATE" value="([^"]+)"/i);
-    __VIEWSTATE = viewstateMatch?.[1] ?? '';
-  }
-
-  if (!__EVENTVALIDATION) {
-    const eventValidationMatch = html.match(/id="__EVENTVALIDATION" value="([^"]+)"/i)
-      ?? html.match(/name="__EVENTVALIDATION" value="([^"]+)"/i);
-    __EVENTVALIDATION = eventValidationMatch?.[1] ?? '';
-  }
-
-  if (!__VIEWSTATE || !__EVENTVALIDATION) throw new Error('Missing ASP.NET hidden fields');
-  return { __VIEWSTATE, __EVENTVALIDATION, __VIEWSTATEGENERATOR };
-}
-
-function parseUnits(html: string) {
-  const doc = parseHtmlDocument(html);
-  const out: Array<{ id: string; name: string }> = []; const seen = new Set<string>();
-  for (const el of Array.from(doc.querySelectorAll('a, button, li, div'))) {
-    const raw = `${el.getAttribute('onclick') ?? ''} ${el.getAttribute('href') ?? ''}`;
-    const m = raw.match(/(?:sideBarSelectUnit|unitsSelectUnit|unitTreeSelectUnit|childUnitsSelectUnit)\((\d+)\)/i); if (!m) continue;
-    const id = m[1]; if (seen.has(id)) continue; const name = stripText(el.textContent); if (!name) continue;
-    seen.add(id); out.push({ id, name });
-  }
-  return out;
-}
-function parseChildUnits(html: string) {
-  const doc = parseHtmlDocument(html); const out: Array<{ id: string; name: string }> = []; const seen = new Set<string>();
-  for (const el of Array.from(doc.querySelectorAll('a, button, li, div'))) {
-    const raw = `${el.getAttribute('onclick') ?? ''} ${el.getAttribute('href') ?? ''}`;
-    const m = raw.match(/(?:childUnitsSelectUnit|sideBarSelectUnit|unitsSelectUnit)\((\d+)\)/i); if (!m) continue;
-    const id = m[1]; if (seen.has(id)) continue; const name = stripText(el.textContent); if (!name) continue;
-    seen.add(id); out.push({ id, name });
-  }
-  return out;
-}
-function parseMenus(html: string) {
-  const doc = parseHtmlDocument(html); const out: Array<{ id: string; name: string }> = []; const seen = new Set<string>();
-  for (const el of Array.from(doc.querySelectorAll('a, button, li, div'))) {
-    const raw = `${el.getAttribute('onclick') ?? ''} ${el.getAttribute('href') ?? ''}`;
-    const m = raw.match(/menuListSelectMenu\((\d+)\)/i); if (!m) continue;
-    const id = m[1]; if (seen.has(id)) continue; const name = stripText(el.textContent); if (!name) continue;
-    seen.add(id); out.push({ id, name });
-  }
-  if (out.length) return out;
-  // Fallback for variants where menu handlers are embedded in attributes only.
-  for (const m of html.matchAll(/menuListSelectMenu\((\d+)\)[\s\S]{0,240}?>\s*([^<][\s\S]{0,120}?)\s*</gi)) {
-    const id = m[1]; if (seen.has(id)) continue;
-    const name = stripText(m[2]); if (!name) continue;
-    seen.add(id); out.push({ id, name });
-  }
-  return out;
-}
-function parseItems(html: string) {
-  const doc = parseHtmlDocument(html); const out: Array<{ id: string; name: string }> = []; const seen = new Set<string>();
-  for (const el of Array.from(doc.querySelectorAll('tr, li, div'))) {
-    const m = el.outerHTML.match(/(?:menuDetailGridCb\(this,\s*|ShowItemNutritionLabel\(|cbm)(\d+)/i); if (!m) continue;
-    const id = m[1]; if (seen.has(id)) continue;
-    const nameEl = el.querySelector('.cbo_nn_itemPrimaryName') ?? el.querySelector('[class*="itemPrimaryName"]') ?? el.querySelector('a') ?? el;
-    const name = stripText(nameEl?.textContent); if (!name || /^\d+$/.test(name)) continue;
-    seen.add(id); out.push({ id, name });
-  }
-  if (out.length) return out;
-  // Fallback for row structure keyed by checkbox IDs.
-  for (const row of Array.from(doc.querySelectorAll('tr'))) {
-    const cb = row.querySelector('input[id^="cbm"]') as any;
-    const id = cb?.getAttribute('id')?.replace(/^cbm/, '');
-    if (!id || seen.has(id)) continue;
-    const name = stripText((row.querySelector('.cbo_nn_itemPrimaryName') as any)?.textContent ?? (row.querySelector('a') as any)?.textContent ?? row.textContent);
-    if (!name || /^\d+$/.test(name)) continue;
-    seen.add(id); out.push({ id, name });
-  }
-  return out;
-}
-
-interface ParsedStationItem {
-  id: string;
-  name: string;
-  servingSize: string | null;
-  detailOid: string | null;
-  allergens: string[];
-  dietaryFlags: string[];
-}
-
-interface ParsedStationCategory {
-  name: string;
-  items: ParsedStationItem[];
-}
-
-const detailOidFromRow = (rowHtml: string): string | null => {
-  const match = rowHtml.match(
-    /(?:ShowItemNutritionLabel\(|menuDetailGridCb\(\s*this,\s*|detailOid["'\s:=]+|id=["']cbm)(\d+)/i,
-  );
-  return match?.[1] ?? null;
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
-function parseStationCategoriesFromItemPanel(html: string): ParsedStationCategory[] {
-  const doc = parseHtmlDocument(html);
-  const itemPanel = doc.querySelector('#itemPanel') ?? doc;
-  const table = itemPanel.querySelector('.cbo_nn_itemGridTable');
-  if (!table) return [];
+const BASE_URL = "http://netnutrition.bsu.edu/NetNutrition/1";
 
-  const categories: ParsedStationCategory[] = [];
-  let currentCategory: ParsedStationCategory | null = null;
-  const seenItems = new Set<string>();
-
-  for (const row of Array.from(table.querySelectorAll('tr'))) {
-    const groupCell = row.querySelector('td.cbo_nn_itemGroupRow');
-    if (groupCell) {
-      const groupName = stripText(groupCell.textContent);
-      if (!groupName) continue;
-      currentCategory = { name: groupName, items: [] };
-      categories.push(currentCategory);
-      continue;
-    }
-
-    const nameEl = row.querySelector('.cbo_nn_itemPrimaryName')
-      ?? row.querySelector('[class*="itemPrimaryName"]')
-      ?? row.querySelector('a');
-    const itemName = stripText(nameEl?.textContent);
-    if (!itemName) continue;
-
-    const detailOid = detailOidFromRow(row.outerHTML);
-    const itemId = detailOid ?? `${itemName.toLowerCase()}_${seenItems.size}`;
-    if (seenItems.has(itemId)) continue;
-    seenItems.add(itemId);
-
-    const servingSize = stripText(
-      row.querySelector('.cbo_nn_itemServingSize')?.textContent
-        ?? row.querySelector('[class*="itemServing"]')?.textContent
-        ?? null,
-    ) || null;
-    const allergens: string[] = [];
-    const dietaryFlags: string[] = [];
-    for (const img of Array.from(row.querySelectorAll('img'))) {
-      const title = stripText(img.getAttribute('title'));
-      if (!title) continue;
-      const lower = title.toLowerCase();
-      if (lower === 'vegan' || lower === 'vegetarian') dietaryFlags.push(title);
-      else allergens.push(title);
-    }
-
-    if (!currentCategory) {
-      currentCategory = { name: 'All Items', items: [] };
-      categories.push(currentCategory);
-    }
-
-    currentCategory.items.push({
-      id: itemId,
-      name: itemName,
-      servingSize,
-      detailOid,
-      allergens,
-      dietaryFlags,
-    });
-  }
-
-  return categories.filter((c) => c.items.length > 0);
+interface SessionState {
+  cookies: string[];
 }
 
-function parsePanelResponse(text: string): { panelType: 'childUnitsPanel' | 'menuPanel' | 'itemPanel' | 'unknown'; html: string; mergedHtml: string } {
-  const trimmed = text.trim(); if (!trimmed) return { panelType: 'unknown', html: '', mergedHtml: '' };
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    let parsed: { panels?: Array<{ id: string; html: string }>; success?: boolean; errorHTML?: string };
-    try {
-      parsed = JSON.parse(trimmed) as { panels?: Array<{ id: string; html: string }>; success?: boolean; errorHTML?: string };
-    } catch {
-      return { panelType: 'unknown', html: trimmed, mergedHtml: trimmed };
+/** Collect cookies from a response and merge into existing list. */
+function collectCookies(res: Response, cookies: string[]): string[] {
+  const updated = [...cookies];
+  const setCookies = res.headers.getSetCookie?.() ?? [];
+  for (const c of setCookies) {
+    const name = c.split("=")[0];
+    const idx = updated.findIndex((x) => x.startsWith(name + "="));
+    const value = c.split(";")[0];
+    if (idx >= 0) {
+      updated[idx] = value;
+    } else {
+      updated.push(value);
     }
-    if (parsed.success === false && parsed.errorHTML) {
-      return { panelType: 'unknown', html: parsed.errorHTML, mergedHtml: parsed.errorHTML };
-    }
-    const panels = parsed.panels ?? []; const mergedHtml = panels.map((p) => p.html ?? '').join('\n'); const by = (id: string) => panels.find((p) => p.id === id)?.html ?? '';
-    const child = by('childUnitsPanel') || by('childUnitPanel'); if (child) return { panelType: 'childUnitsPanel', html: child, mergedHtml };
-    const menu = by('menuPanel') || by('menuListPanel'); if (menu) return { panelType: 'menuPanel', html: menu, mergedHtml };
-    const item = by('itemPanel'); if (item) return { panelType: 'itemPanel', html: item, mergedHtml };
-    if (mergedHtml.includes('menuListSelectMenu')) return { panelType: 'menuPanel', html: mergedHtml, mergedHtml };
-    if (mergedHtml.includes('menuDetailGridCb')) return { panelType: 'itemPanel', html: mergedHtml, mergedHtml };
-    return { panelType: 'unknown', html: mergedHtml, mergedHtml };
   }
-  return { panelType: 'unknown', html: trimmed, mergedHtml: trimmed };
-}
-
-function parseNutritionLabel(html: string) {
-  const doc = parseHtmlDocument(html);
-  let calories: number | null = null, protein: number | null = null, carbs: number | null = null, fat: number | null = null;
-  for (const row of Array.from(doc.querySelectorAll('tr'))) {
-    const cells = Array.from(row.querySelectorAll('td, th')); if (cells.length < 2) continue;
-    const key = stripText(cells[0].textContent).toLowerCase(); const val = stripText(cells[cells.length - 1].textContent);
-    const n = Number.isFinite(parseNumeric(val)) ? parseNumeric(val) : null;
-    if ((key === 'calories' || key.includes('total calories')) && calories === null) calories = n;
-    else if (key.includes('protein') && protein === null) protein = n;
-    else if ((key.includes('total carbohydrate') || key.includes('total carb')) && carbs === null) carbs = n;
-    else if (key.includes('total fat') && fat === null) fat = n;
-  }
-  calories ??= Number.isFinite(parseNumeric(stripText(doc.querySelector('#lblCalories')?.textContent ?? ''))) ? parseNumeric(stripText(doc.querySelector('#lblCalories')?.textContent ?? '')) : null;
-  protein ??= Number.isFinite(parseNumeric(stripText(doc.querySelector('#lblProtein')?.textContent ?? ''))) ? parseNumeric(stripText(doc.querySelector('#lblProtein')?.textContent ?? '')) : null;
-  carbs ??= Number.isFinite(parseNumeric(stripText(doc.querySelector('#lblTotalCarb')?.textContent ?? ''))) ? parseNumeric(stripText(doc.querySelector('#lblTotalCarb')?.textContent ?? '')) : null;
-  fat ??= Number.isFinite(parseNumeric(stripText(doc.querySelector('#lblTotalFat')?.textContent ?? ''))) ? parseNumeric(stripText(doc.querySelector('#lblTotalFat')?.textContent ?? '')) : null;
-  return { calories, protein, carbs, fat, raw: { html, extracted_at: new Date().toISOString() } };
-}
-
-class NetNutritionClient {
-  private cookieJar = new Map<string, string>(); private hiddenFields: HiddenFields | null = null;
-  private lastBootstrapDebug: {
-    finalUrl: string;
-    responseStatus: number | null;
-    cookieNames: string[];
-    htmlFirst1500: string;
-    containsViewstate: boolean;
-    containsSideBarSelectUnit: boolean;
-    containsStartupError: boolean;
-    containsContinue: boolean;
-  } | null = null;
-
-  private ensureExternalCookie() {
-    if (!this.cookieJar.has('CBORD.netnutrition2')) this.cookieJar.set('CBORD.netnutrition2', 'NNexternalID=1');
-  }
-  private captureBootstrapDebug(finalUrl: string, responseStatus: number | null, html: string) {
-    this.lastBootstrapDebug = {
-      finalUrl,
-      responseStatus,
-      cookieNames: Array.from(this.cookieJar.keys()),
-      htmlFirst1500: html.slice(0, 1500),
-      containsViewstate: html.includes('__VIEWSTATE'),
-      containsSideBarSelectUnit: html.includes('sideBarSelectUnit'),
-      containsStartupError: html.includes('NetNutrition Start-up Error'),
-      containsContinue: html.includes('Continue'),
-    };
-  }
-  private logBootstrapDebug(reason: string) {
-    if (!this.lastBootstrapDebug) return;
-    console.error(reason, this.lastBootstrapDebug);
-  }
-
-  private async initSession(): Promise<string> {
-    this.cookieJar.clear();
-    let current = NETNUTRITION_BASE;
-    for (let i = 0; i < 5; i++) {
-      const res = await fetch(current, {
-        headers: {
-          'user-agent': USER_AGENT,
-          accept: 'text/html',
-          cookie: cookieHeader(this.cookieJar),
-        },
-        redirect: 'manual',
-      });
-      collectCookies(res.headers, this.cookieJar);
-      this.ensureExternalCookie();
-
-      const location = res.headers.get('location');
-      if (res.status >= 300 && res.status < 400 && location) {
-        current = new URL(location, current).toString();
-        continue;
+  // Fallback for environments without getSetCookie
+  if (setCookies.length === 0) {
+    const raw = res.headers.get("set-cookie");
+    if (raw) {
+      for (const part of raw.split(/,(?=\s*\w+=)/)) {
+        const value = part.split(";")[0].trim();
+        const name = value.split("=")[0];
+        const idx = updated.findIndex((x) => x.startsWith(name + "="));
+        if (idx >= 0) {
+          updated[idx] = value;
+        } else {
+          updated.push(value);
+        }
       }
+    }
+  }
+  return updated;
+}
+
+/** Establish a session by manually following redirects to capture all cookies. */
+async function initSession(): Promise<SessionState> {
+  let cookies: string[] = [];
+  let url: string = BASE_URL;
+
+  // Follow redirects manually to capture cookies from each hop
+  for (let i = 0; i < 5; i++) {
+    const res = await fetch(url, {
+      redirect: "manual",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+        "Accept":
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Cookie": cookies.join("; "),
+      },
+    });
+    cookies = collectCookies(res, cookies);
+    await res.text(); // consume body
+
+    const location = res.headers.get("location");
+    if (location && res.status >= 300 && res.status < 400) {
+      url = new URL(location, url).href;
+      console.log(`  Redirect ${res.status} â ${url}`);
+    } else {
       break;
     }
-    this.ensureExternalCookie();
-
-    const finalUrl = `${NETNUTRITION_BASE}#`;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await fetch(finalUrl, {
-        headers: {
-          'user-agent': USER_AGENT,
-          accept: 'text/html',
-          cookie: cookieHeader(this.cookieJar),
-        },
-      });
-      collectCookies(res.headers, this.cookieJar);
-      this.ensureExternalCookie();
-      const html = await res.text();
-      this.captureBootstrapDebug(finalUrl, res.status, html);
-
-      if (!res.ok) {
-        this.logBootstrapDebug('Homepage bootstrap HTTP error');
-        throw new Error(`GET homepage failed: ${res.status}. HTML snippet: ${shortHtmlSnippet(html)}`);
-      }
-      if (isStartupError(html)) {
-        if (attempt === 0) continue;
-        this.logBootstrapDebug('Startup bootstrap debug');
-        throw new Error(`Startup error on homepage bootstrap. HTML snippet: ${shortHtmlSnippet(html)}`);
-      }
-      this.hiddenFields = extractHiddenFields(html);
-      return html;
-    }
-    this.logBootstrapDebug('Homepage bootstrap exhausted retries');
-    const snippet = this.lastBootstrapDebug ? shortHtmlSnippet(this.lastBootstrapDebug.htmlFirst1500) : '';
-    throw new Error(`GET homepage failed during bootstrap. HTML snippet: ${snippet}`);
   }
 
-  async getHomepage() {
-    let lastErr: unknown;
-    for (let i = 1; i <= RETRIES; i++) {
-      try {
-        const html = await this.initSession();
-        return { units: parseUnits(html) };
-      } catch (e) {
-        lastErr = e;
-        if (i < RETRIES) await new Promise((r) => setTimeout(r, i * 200));
-      }
-    }
-    if (String(lastErr).includes('bootstrap') || String(lastErr).includes('Startup error')) {
-      this.logBootstrapDebug('getHomepage bootstrap failure after retries');
-    }
-    throw new Error(`Failed to initialize NetNutrition session: ${String(lastErr)}`);
+  // Ensure the CBORD cookie is present
+  const hasCbord = cookies.some((c) => c.startsWith("CBORD.netnutrition2="));
+  if (!hasCbord) {
+    cookies.push("CBORD.netnutrition2=NNexternalID=1");
   }
 
-  private buildForm(extra: Record<string, string>) { if (!this.hiddenFields) throw new Error('Hidden ASP.NET fields not initialized'); const form = new URLSearchParams({ __VIEWSTATE: this.hiddenFields.__VIEWSTATE, __EVENTVALIDATION: this.hiddenFields.__EVENTVALIDATION, ...extra }); if (this.hiddenFields.__VIEWSTATEGENERATOR) form.set('__VIEWSTATEGENERATOR', this.hiddenFields.__VIEWSTATEGENERATOR); return form; }
-  private refreshHiddenFields(html: string) { try { this.hiddenFields = extractHiddenFields(html); } catch { /* expected for panel responses */ } }
-  private async postWithSession(path: string, form: URLSearchParams) {
-    this.ensureExternalCookie();
-    const res = await fetch(`${NETNUTRITION_BASE}/${path}`, {
-      method: 'POST',
-      headers: {
-        'user-agent': USER_AGENT,
-        accept: 'application/json,text/html,*/*',
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'x-requested-with': 'XMLHttpRequest',
-        origin: NETNUTRITION_ROOT,
-        referer: `${NETNUTRITION_BASE}#`,
-        cookie: cookieHeader(this.cookieJar),
-      },
-      body: form.toString(),
-    });
-    const text = await res.text();
-    collectCookies(res.headers, this.cookieJar);
-    this.ensureExternalCookie();
-    this.refreshHiddenFields(text);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return text;
-  }
-  async postWithRetry(path: string, data: Record<string, string>) {
-    let lastErr: unknown;
-    for (let i = 1; i <= RETRIES; i++) {
-      try {
-        const form = this.buildForm(data);
-        const text = await this.postWithSession(path, form);
-        if (isStartupError(text)) {
-          console.warn(`Startup error on ${path}; refreshing session and retrying`);
-          await this.initSession();
-          throw new Error('Startup error from NetNutrition');
-        }
-        return text;
-      } catch (e) {
-        lastErr = e;
-        console.error(`POST ${path} failed retry ${i}/${RETRIES}`, e);
-        if (i < RETRIES) {
-          await new Promise((r) => setTimeout(r, i * 200));
-          if (String(e).includes('Startup error')) await this.initSession();
-        }
-      }
-    }
-    throw new Error(`POST ${path} failed after retries: ${String(lastErr)}`);
-  }
-  async selectUnitFromSidebar(unitId: string) { return parsePanelResponse(await this.postWithRetry('Unit/SelectUnitFromSideBar', { unitOid: unitId, selectedUnitOid: unitId })); }
-  async selectChildUnit(unitId: string) { return parsePanelResponse(await this.postWithRetry('Unit/SelectUnitFromChildUnitsList', { unitOid: unitId, childUnitOid: unitId })); }
-  async selectMenu(menuId: string) { return parsePanelResponse(await this.postWithRetry('Menu/SelectMenu', { menuOid: menuId, selectedMenuOid: menuId })); }
-  async nutritionForItem(itemId: string, menuId?: string) { const response = parsePanelResponse(await this.postWithRetry('NutritionDetail/ShowItemNutritionLabel', { detailOid: itemId, ...(menuId ? { menuOid: menuId } : {}) })); const html = response.html || response.mergedHtml; return parseNutritionLabel(html); }
+  console.log(
+    "Session cookies:",
+    cookies.map((c) => c.split("=")[0]).join(", "),
+  );
+  return { cookies };
 }
 
-async function readCachedResponse(supabase: ReturnType<typeof getSupabaseAdmin>): Promise<MenuResponse | null> {
-  const { data: md } = await supabase.from('metadata').select('last_updated').limit(1);
-  const last_updated = md?.[0]?.last_updated ?? null;
-  const { data: halls, error: hErr } = await supabase.from('dining_halls').select('id,name').order('name'); if (hErr || !halls) return null;
-  const { data: cats, error: cErr } = await supabase.from('menu_categories').select('id,hall_id,name').order('name'); if (cErr || !cats) return null;
-  const { data: items, error: iErr } = await supabase.from('food_items').select('id,category_id,name').order('name'); if (iErr || !items) return null;
-  const { data: facts, error: fErr } = await supabase.from('nutrition_facts').select('item_id,calories,protein,carbs,fat'); if (fErr || !facts) return null;
-  const factsMap = new Map(facts.map((f) => [f.item_id, f]));
-  return {
-    halls: halls.map((hall) => ({
-      name: hall.name,
-      stations: [
-        {
-          name: hall.name,
-          categories: cats
-            .filter((c) => c.hall_id === hall.id)
-            .map((c) => ({
-              name: c.name,
-              items: items.filter((i) => i.category_id === c.id).map((item) => ({ name: item.name, calories: factsMap.get(item.id)?.calories ?? null, protein: factsMap.get(item.id)?.protein ?? null, carbs: factsMap.get(item.id)?.carbs ?? null, fat: factsMap.get(item.id)?.fat ?? null })),
-            })),
-        },
-      ],
-    })),
-    last_updated,
-  };
+/** POST to a NetNutrition endpoint maintaining session cookies. */
+async function postWithSession(
+  session: SessionState,
+  path: string,
+  body: Record<string, string | number>,
+): Promise<string> {
+  const formData = new URLSearchParams();
+  for (const [k, v] of Object.entries(body)) {
+    formData.append(k, String(v));
+  }
+
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "Cookie": session.cookies.join("; "),
+      "X-Requested-With": "XMLHttpRequest",
+      "Accept": "*/*",
+      "Referer": BASE_URL,
+      "Origin": "http://netnutrition.bsu.edu",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Connection": "keep-alive",
+    },
+    body: formData.toString(),
+  });
+
+  const text = await res.text();
+  console.log(
+    `  POST ${path} â status ${res.status}, length ${text.length}, starts: ${text.substring(0, 120)}`,
+  );
+
+  // Update session cookies from response
+  session.cookies = collectCookies(res, session.cookies);
+
+  return text;
 }
 
-const isCacheFresh = (lastUpdated: string | null) => !!lastUpdated && (Date.now() - new Date(lastUpdated).getTime() < CACHE_MAX_AGE_MS);
+/** Check if a response is a Start-up Error page (session lost). */
+function isStartupError(text: string): boolean {
+  return text.includes("NetNutrition Start-up Error") || text.includes("ANA_border");
+}
 
-async function upsertScrapeData(supabase: ReturnType<typeof getSupabaseAdmin>, halls: ScrapeHall[], updatedAt: string) {
-  const hallRows = halls.map((h) => ({ id: h.id, name: h.name }));
-  const catRows = halls.flatMap((h) => h.stations.flatMap((s) => s.categories.map((c) => ({ id: c.id, hall_id: c.hallId, name: `${s.name} :: ${c.name}` }))));
-  const itemRows = halls.flatMap((h) => h.stations.flatMap((s) => s.categories.flatMap((c) => c.items.map((i) => ({
-    id: i.id,
-    category_id: c.id,
-    name: i.name,
-    allergens: i.allergens ?? [],
-    dietary_flags: i.dietaryFlags ?? [],
-  })))));
-  const factRows = halls.flatMap((h) => h.stations.flatMap((s) => s.categories.flatMap((c) => c.items.map((i) => ({ id: `nf_${i.id}`, item_id: i.id, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat, raw_label_json: i.rawLabel })))));
-  if (hallRows.length) { const { error } = await supabase.from('dining_halls').upsert(hallRows, { onConflict: 'id' }); if (error) throw error; }
+/** Extract HTML from a specific panel in the JSON response. */
+function extractPanelHtml(responseText: string, panelId: string): string {
   try {
-    if (catRows.length) { const { error } = await supabase.from('menu_categories').upsert(catRows, { onConflict: 'id' }); if (error) throw error; }
-    if (itemRows.length) { const { error } = await supabase.from('food_items').upsert(itemRows, { onConflict: 'id' }); if (error) throw error; }
-    if (factRows.length) { const { error } = await supabase.from('nutrition_facts').upsert(factRows, { onConflict: 'id' }); if (error) throw error; }
-  } catch (error) {
-    console.warn('Category-aware tables unavailable; persisted halls only and keeping grouped payload in response.', error);
+    const data = JSON.parse(responseText);
+    if (data.success && Array.isArray(data.panels)) {
+      const panel = data.panels.find(
+        (p: { id: string; html: string }) => p.id === panelId,
+      );
+      return panel?.html ?? "";
+    }
+  } catch {
+    // Not JSON â return raw for regex parsing
   }
-  const { error: mErr } = await supabase.from('metadata').upsert({ id: 1, last_updated: updatedAt }, { onConflict: 'id' }); if (mErr) throw mErr;
+  return responseText;
 }
 
-function asMenuResponse(halls: ScrapeHall[], last_updated: string): MenuResponse {
-  return {
-    halls: halls.map((h) => ({
-      name: h.name,
-      stations: h.stations.map((s) => ({
-        name: s.name,
-        categories: s.categories.map((c) => ({
-          name: c.name,
-          items: c.items.map((i) => ({ name: i.name, calories: i.calories, protein: i.protein, carbs: i.carbs, fat: i.fat })),
-        })),
-      })),
-    })),
-    last_updated,
-  };
-}
+// Known dining halls with their sidebar unitOids (verified from browser captures)
+const KNOWN_HALLS = [
+  { name: "The Atrium", unitOid: 1 },
+  { name: "Atrium CafÃ©", unitOid: 10 },
+  { name: "Noyer", unitOid: 14 },
+  { name: "Student Center Tally Food Court", unitOid: 16 },
+  { name: "North Dining", unitOid: 21 },
+  { name: "Woodworth Commons", unitOid: 27 },
+  { name: "Bookmark Cafe", unitOid: 33 },
+  { name: "Tom John Food Shop", unitOid: 35 },
+];
 
-async function scrapeAllHalls(): Promise<ScrapeHall[]> {
-  const client = new NetNutritionClient(); const { units } = await client.getHomepage(); const halls: ScrapeHall[] = [];
-  for (const unit of units) {
-    let state = await client.selectUnitFromSidebar(unit.id);
-    let hops = 0;
-    while (state.panelType === 'childUnitsPanel' && hops++ < 20) {
-      const children = parseChildUnits(state.html || state.mergedHtml); if (!children.length) throw new Error(`No child units for ${unit.name}; htmlSnippet=${(state.html || state.mergedHtml).slice(0, 180)}`);
-      let nextState: ReturnType<typeof parsePanelResponse> | null = null;
-      for (const child of children) {
-        const candidate = await client.selectChildUnit(child.id);
-        if (candidate.panelType === 'menuPanel' || candidate.panelType === 'itemPanel' || candidate.panelType === 'childUnitsPanel') {
-          nextState = candidate;
-          if (candidate.panelType !== 'childUnitsPanel') break;
-        }
-      }
-      if (!nextState) throw new Error(`Unable to select child unit for ${unit.name}`);
-      state = nextState;
+/** Parse dining halls from the sidebar HTML in the initial page. */
+function parseHallsFromPage(html: string): { name: string; unitOid: number }[] {
+  const halls: { name: string; unitOid: number }[] = [];
+  // Sidebar links: onclick="javascript:sideBarSelectUnit(N);" ... >Hall Name</a>
+  const regex = /sideBarSelectUnit\((\d+)\)[^>]*>([^<]+)/gi;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
+    const unitOid = parseInt(match[1]);
+    const name = match[2].trim();
+    if (name) {
+      halls.push({ unitOid, name });
     }
-    const stations: ScrapeStation[] = [];
-    if (state.panelType === 'menuPanel') {
-      const station: ScrapeStation = { id: `station_${unit.id}`, hallId: unit.id, name: unit.name, categories: [] };
-      for (const menu of parseMenus(state.html || state.mergedHtml)) {
-        const menuState = await client.selectMenu(menu.id); const items = parseItems(menuState.html || menuState.mergedHtml);
-        const category: ScrapeCategory = { id: `menu_${menu.id}`, hallId: unit.id, stationId: station.id, name: menu.name, items: [] };
-        for (const item of items) {
-          const nutrition = await client.nutritionForItem(item.id, menu.id);
-          category.items.push({ id: `item_${item.id}`, name: item.name, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, rawLabel: nutrition.raw });
-        }
-        station.categories.push(category);
-      }
-      stations.push(station);
-    } else if (state.panelType === 'itemPanel') {
-      const station: ScrapeStation = { id: `station_${unit.id}`, hallId: unit.id, name: unit.name, categories: [] };
-      const stationCategories = parseStationCategoriesFromItemPanel(state.html || state.mergedHtml);
-      if (stationCategories.length) {
-        for (const [index, stationCategory] of stationCategories.entries()) {
-          const category: ScrapeCategory = {
-            id: `menu_${unit.id}_${index + 1}`,
-            hallId: unit.id,
-            stationId: station.id,
-            name: stationCategory.name,
-            items: [],
-          };
-          for (const item of stationCategory.items) {
-            if (!item.detailOid) continue;
-            const nutrition = await client.nutritionForItem(item.detailOid);
-            category.items.push({
-              id: `item_${item.id}`,
-              name: item.name,
-              calories: nutrition.calories,
-              protein: nutrition.protein,
-              carbs: nutrition.carbs,
-              fat: nutrition.fat,
-              allergens: item.allergens,
-              dietaryFlags: item.dietaryFlags,
-              rawLabel: {
-                ...nutrition.raw,
-                serving_size: item.servingSize,
-                detail_oid: item.detailOid,
-              },
-            });
-          }
-          if (category.items.length) station.categories.push(category);
-        }
-      } else {
-        const category: ScrapeCategory = { id: `menu_${unit.id}_default`, hallId: unit.id, stationId: station.id, name: 'All Items', items: [] };
-        for (const item of parseItems(state.html || state.mergedHtml)) {
-          const nutrition = await client.nutritionForItem(item.id);
-          category.items.push({ id: `item_${item.id}`, name: item.name, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fat: nutrition.fat, rawLabel: nutrition.raw });
-        }
-        station.categories.push(category);
-      }
-      stations.push(station);
-    } else {
-      throw new Error(`Could not reach menuPanel/itemPanel for ${unit.name}`);
-    }
-    halls.push({ id: unit.id, name: unit.name, stations });
   }
   return halls;
 }
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
-  if (req.method !== 'GET') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405, headers: { ...corsHeaders, 'content-type': 'application/json' } });
+/** Parse station links from childUnitsPanel HTML. */
+function parseStations(html: string): { name: string; unitOid: number }[] {
+  const stations: { name: string; unitOid: number }[] = [];
+  // Pattern: childUnitsSelectUnit(N);">StationName</a>
+  const regex = /childUnitsSelectUnit\((\d+)\)[^>]*>([^<]+)/gi;
+  let match;
+  while ((match = regex.exec(html)) !== null) {
+    const unitOid = parseInt(match[1]);
+    const name = match[2].trim();
+    if (name) {
+      stations.push({ unitOid, name });
+    }
+  }
+  return stations;
+}
 
-  const supabase = getSupabaseAdmin();
-  const cached = await readCachedResponse(supabase);
-  if (cached && isCacheFresh(cached.last_updated)) return new Response(JSON.stringify(cached), { headers: { ...corsHeaders, 'content-type': 'application/json' } });
+interface ParsedFoodItem {
+  name: string;
+  detailOid: number;
+  allergens: string[];
+  dietaryFlags: string[];
+  servingSize: string;
+}
+
+/** Parse food items from itemPanel HTML. */
+function parseFoodItems(html: string): ParsedFoodItem[] {
+  const items: ParsedFoodItem[] = [];
+
+  // Match each item row: cbo_nn_itemPrimaryRow or cbo_nn_itemAlternateRow
+  const rowRegex =
+    /<tr[^>]*class='cbo_nn_item(?:Primary|Alternate)Row'[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+
+  while ((rowMatch = rowRegex.exec(html)) !== null) {
+    const row = rowMatch[1];
+
+    // Extract detailOid from getItemNutritionLabel(ID)
+    const oidMatch = row.match(/getItemNutritionLabel\((\d+)\)/);
+    if (!oidMatch) continue;
+    const detailOid = parseInt(oidMatch[1]);
+
+    // Extract item name and allergen/dietary info from cbo_nn_itemHover cell
+    const hoverMatch = row.match(
+      /class='cbo_nn_itemHover'>([\s\S]*?)<\/td>/i,
+    );
+    if (!hoverMatch) continue;
+
+    const hoverContent = hoverMatch[1];
+
+    // Name is the text before the first <img or end of content
+    const nameMatch = hoverContent.match(/^([^<]+)/);
+    const name = nameMatch ? nameMatch[1].trim() : "";
+    if (!name) continue;
+
+    // Extract allergens and dietary flags from <img title='...'
+    const allergens: string[] = [];
+    const dietaryFlags: string[] = [];
+    const imgRegex = /title='([^']+)'/gi;
+    let imgMatch;
+    while ((imgMatch = imgRegex.exec(hoverContent)) !== null) {
+      const title = imgMatch[1].trim();
+      const lower = title.toLowerCase();
+      if (lower === "vegan" || lower === "vegetarian") {
+        dietaryFlags.push(title);
+      } else {
+        allergens.push(title);
+      }
+    }
+
+    // Serving size: the <td> after the hover cell
+    const afterHover = row.substring(
+      (hoverMatch.index ?? 0) + hoverMatch[0].length,
+    );
+    const servingMatch = afterHover.match(/<td[^>]*>([^<]*)<\/td>/i);
+    const servingSize = servingMatch ? servingMatch[1].trim() : "";
+
+    items.push({ name, detailOid, allergens, dietaryFlags, servingSize });
+  }
+
+  return items;
+}
+
+/** Parse nutrition facts from the nutrition label HTML. */
+function parseNutrients(html: string): Record<string, string> {
+  const nutrients: Record<string, string> = {};
+
+  // Serving size from label
+  const servingMatch = html.match(/Serving Size:(?:&nbsp;|\s)*([^<]+)/i);
+  if (servingMatch) {
+    nutrients["Serving Size"] = servingMatch[1]
+      .replace(/&nbsp;/g, " ")
+      .trim();
+  }
+
+  // Calories
+  const calMatch = html.match(
+    />Calories<\/span>(?:&nbsp;|\s)*<span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/i,
+  );
+  if (calMatch) {
+    nutrients["Calories"] = calMatch[1].replace(/&nbsp;/g, "").trim();
+  }
+
+  // Calories from Fat
+  const calFatMatch = html.match(
+    /Calories from Fat(?:&nbsp;|\s)*<span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/i,
+  );
+  if (calFatMatch) {
+    nutrients["Calories from Fat"] = calFatMatch[1]
+      .replace(/&nbsp;/g, "")
+      .trim();
+  }
+
+  // Main nutrients (bold)
+  const mainRegex =
+    /font-weight:\s*bold;?\s*'>\s*([^<]+)<\/span><\/td><td><span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/gi;
+  let mainMatch;
+  while ((mainMatch = mainRegex.exec(html)) !== null) {
+    const label = mainMatch[1].trim();
+    const value = mainMatch[2].replace(/&nbsp;/g, "").trim();
+    if (label && value && label !== "Calories") {
+      nutrients[label] = value;
+    }
+  }
+
+  // Sub-nutrients (normal weight)
+  const subRegex =
+    /font-weight:\s*normal;?\s*'>\s*([^<]+)<\/span><\/td><td><span[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>(?:&nbsp;|\s)*([^<]+)/gi;
+  let subMatch;
+  while ((subMatch = subRegex.exec(html)) !== null) {
+    const label = subMatch[1].trim();
+    const value = subMatch[2].replace(/&nbsp;/g, "").trim();
+    if (label && value) {
+      nutrients[label] = value;
+    }
+  }
+
+  // Secondary nutrients (vitamins etc)
+  const secRegex =
+    /class='cbo_nn_SecondaryNutrientLabel'>\s*([^<]+)<\/td>\s*<td[^>]*class='cbo_nn_SecondaryNutrient'[^>]*>\s*([^<]+)/gi;
+  let secMatch;
+  while ((secMatch = secRegex.exec(html)) !== null) {
+    const label = secMatch[1].trim();
+    const value = secMatch[2].trim();
+    if (label && value) {
+      nutrients[label] = value;
+    }
+  }
+
+  // Ingredients
+  const ingredientsMatch = html.match(
+    /class='cbo_nn_LabelIngredients'>\s*([\s\S]*?)<\/span>/i,
+  );
+  if (ingredientsMatch) {
+    nutrients["Ingredients"] = ingredientsMatch[1]
+      .replace(/&nbsp;/g, " ")
+      .replace(/<[^>]+>/g, "")
+      .trim();
+  }
+
+  return nutrients;
+}
+
+/** Upsert a food item into the database. */
+async function upsertItem(
+  supabase: ReturnType<typeof createClient>,
+  stationId: string,
+  item: ParsedFoodItem,
+): Promise<void> {
+  const { error: itemError } = await supabase.from("food_items").upsert(
+    {
+      station_id: stationId,
+      name: item.name,
+      detail_oid: item.detailOid,
+      serving_size: item.servingSize || null,
+      allergens: item.allergens,
+      dietary_flags: item.dietaryFlags,
+    },
+    { onConflict: "detail_oid" },
+  );
+
+  if (itemError) {
+    console.error(`    Error upserting ${item.name}:`, itemError);
+  }
+}
+
+/** Process items from an itemPanel. */
+async function processItemPanel(
+  supabase: ReturnType<typeof createClient>,
+  stationId: string,
+  itemPanelHtml: string,
+): Promise<number> {
+  const foodItems = parseFoodItems(itemPanelHtml);
+  console.log(`    Found ${foodItems.length} food items`);
+
+  for (const item of foodItems) {
+    await upsertItem(supabase, stationId, item);
+  }
+  return foodItems.length;
+}
+
+/** POST with session recovery â re-inits session if Start-up Error is returned. */
+async function postWithRetry(
+  session: SessionState,
+  path: string,
+  body: Record<string, string | number>,
+  maxRetries = 2,
+): Promise<string> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const text = await postWithSession(session, path, body);
+    if (!isStartupError(text)) {
+      return text;
+    }
+    console.log(`  Start-up Error detected (attempt ${attempt + 1}), re-initializing session...`);
+    const newSession = await initSession();
+    session.cookies = newSession.cookies;
+  }
+  // Return last response even if still erroring
+  return await postWithSession(session, path, body);
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
 
   try {
-    const halls = await scrapeAllHalls();
-    const updatedAt = new Date().toISOString();
-    await upsertScrapeData(supabase, halls, updatedAt);
-    return new Response(JSON.stringify(asMenuResponse(halls, updatedAt)), { headers: { ...corsHeaders, 'content-type': 'application/json' } });
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, serviceKey);
+
+    console.log("Starting NetNutrition scrape...");
+
+    // Step 1: Establish session
+    let session = await initSession();
+    console.log("Session established, cookies:", session.cookies.length);
+
+    // Step 2: Load initial page to discover dining halls from sidebar
+    const initPageRes = await fetch(BASE_URL, {
+      headers: {
+        "Cookie": session.cookies.join("; "),
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+        "Accept":
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    session.cookies = collectCookies(initPageRes, session.cookies);
+    const initPageHtml = await initPageRes.text();
+    console.log(`Initial page loaded, length: ${initPageHtml.length}`);
+
+    // If initial page is a Start-up Error, re-init session
+    if (isStartupError(initPageHtml)) {
+      console.log("Initial page returned Start-up Error, re-initializing session...");
+      session = await initSession();
+      // Try loading the page again
+      const retryRes = await fetch(BASE_URL, {
+        headers: {
+          "Cookie": session.cookies.join("; "),
+          "User-Agent":
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
+          "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+      });
+      session.cookies = collectCookies(retryRes, session.cookies);
+      const retryHtml = await retryRes.text();
+      console.log(`Retry page loaded, length: ${retryHtml.length}`);
+    }
+
+    // Discover halls from sidebar
+    let discoveredHalls = parseHallsFromPage(initPageHtml);
+    console.log(
+      `Discovered ${discoveredHalls.length} dining halls from page`,
+    );
+
+    // Fall back to known halls if dynamic discovery fails
+    if (discoveredHalls.length === 0) {
+      console.log("Dynamic discovery failed, using known hall list as fallback");
+      discoveredHalls = KNOWN_HALLS;
+    }
+
+    console.log(
+      `Scraping ${discoveredHalls.length} halls:`,
+      discoveredHalls.map((h) => `${h.name}(${h.unitOid})`).join(", "),
+    );
+
+    let totalItems = 0;
+
+    for (const hall of discoveredHalls) {
+      console.log(
+        `\n=== Scraping: ${hall.name} (unitOid: ${hall.unitOid}) ===`,
+      );
+
+      // Upsert dining hall
+      const { data: hallData, error: hallError } = await supabase
+        .from("dining_halls")
+        .upsert(
+          { name: hall.name, unit_oid: hall.unitOid },
+          { onConflict: "unit_oid" },
+        )
+        .select("id")
+        .single();
+
+      if (hallError) {
+        console.error(`Error upserting hall ${hall.name}:`, hallError);
+        continue;
+      }
+
+      // Step 3: Select dining hall â get stations from childUnitsPanel
+      const sidebarResponse = await postWithRetry(
+        session,
+        "/Unit/SelectUnitFromSideBar",
+        { unitOid: hall.unitOid },
+      );
+
+      // If still a Start-up Error after retries, skip this hall
+      if (isStartupError(sidebarResponse)) {
+        console.log(`  Skipping ${hall.name}: persistent Start-up Error after retries`);
+        continue;
+      }
+
+      const childUnitsHtml = extractPanelHtml(
+        sidebarResponse,
+        "childUnitsPanel",
+      );
+      const itemPanelHtml = extractPanelHtml(sidebarResponse, "itemPanel");
+
+      // Some halls may return items directly (no child units)
+      if (itemPanelHtml && itemPanelHtml.includes("cbo_nn_itemHover")) {
+        console.log(`  Hall ${hall.name} returned items directly (no stations)`);
+        // Use hall itself as a station
+        const { data: stationData, error: stationError } = await supabase
+          .from("stations")
+          .upsert(
+            {
+              dining_hall_id: hallData.id,
+              name: hall.name,
+              unit_oid: hall.unitOid,
+            },
+            { onConflict: "unit_oid" },
+          )
+          .select("id")
+          .single();
+
+        if (!stationError && stationData) {
+          totalItems += await processItemPanel(
+            supabase,
+            stationData.id,
+            itemPanelHtml,
+          );
+        }
+        continue;
+      }
+
+      const stations = parseStations(childUnitsHtml);
+      console.log(`  Found ${stations.length} stations`);
+
+      if (stations.length === 0) {
+        console.log(
+          "  childUnitsHtml sample (first 500 chars):",
+          childUnitsHtml.substring(0, 500),
+        );
+
+        // Fallback: try selecting this hall as a child unit too
+        console.log(`  Trying SelectUnitFromChildUnitsList as fallback for ${hall.name}...`);
+        const childFallback = await postWithRetry(
+          session,
+          "/Unit/SelectUnitFromChildUnitsList",
+          { unitOid: hall.unitOid },
+        );
+
+        if (!isStartupError(childFallback)) {
+          const fallbackItemHtml = extractPanelHtml(childFallback, "itemPanel");
+          const fallbackChildHtml = extractPanelHtml(childFallback, "childUnitsPanel");
+
+          if (fallbackItemHtml && fallbackItemHtml.includes("cbo_nn_itemHover")) {
+            console.log(`  Fallback: found items directly for ${hall.name}`);
+            const { data: stationData, error: stationError } = await supabase
+              .from("stations")
+              .upsert(
+                {
+                  dining_hall_id: hallData.id,
+                  name: hall.name,
+                  unit_oid: hall.unitOid,
+                },
+                { onConflict: "unit_oid" },
+              )
+              .select("id")
+              .single();
+
+            if (!stationError && stationData) {
+              totalItems += await processItemPanel(
+                supabase,
+                stationData.id,
+                fallbackItemHtml,
+              );
+            }
+          } else {
+            const fallbackStations = parseStations(fallbackChildHtml);
+            console.log(`  Fallback: found ${fallbackStations.length} child units for ${hall.name}`);
+            for (const fStation of fallbackStations) {
+              console.log(`    Fallback station: ${fStation.name} (${fStation.unitOid})`);
+              const { data: stationData, error: stationError } = await supabase
+                .from("stations")
+                .upsert(
+                  {
+                    dining_hall_id: hallData.id,
+                    name: fStation.name,
+                    unit_oid: fStation.unitOid,
+                  },
+                  { onConflict: "unit_oid" },
+                )
+                .select("id")
+                .single();
+
+              if (stationError || !stationData) continue;
+
+              const nestedRes = await postWithRetry(
+                session,
+                "/Unit/SelectUnitFromChildUnitsList",
+                { unitOid: fStation.unitOid },
+              );
+              if (isStartupError(nestedRes)) continue;
+
+              const nestedItemHtml = extractPanelHtml(nestedRes, "itemPanel");
+              if (nestedItemHtml && nestedItemHtml.includes("cbo_nn_itemHover")) {
+                totalItems += await processItemPanel(supabase, stationData.id, nestedItemHtml);
+              }
+            }
+          }
+        }
+
+        continue;
+      }
+
+      for (const station of stations) {
+        console.log(
+          `  Station: ${station.name} (unitOid: ${station.unitOid})`,
+        );
+
+        // Upsert station
+        const { data: stationData, error: stationError } = await supabase
+          .from("stations")
+          .upsert(
+            {
+              dining_hall_id: hallData.id,
+              name: station.name,
+              unit_oid: station.unitOid,
+            },
+            { onConflict: "unit_oid" },
+          )
+          .select("id")
+          .single();
+
+        if (stationError) {
+          console.error(
+            `  Error upserting station ${station.name}:`,
+            stationError,
+          );
+          continue;
+        }
+
+        // Step 4: Select station â get food items from itemPanel
+        const childResponse = await postWithRetry(
+          session,
+          "/Unit/SelectUnitFromChildUnitsList",
+          { unitOid: station.unitOid },
+        );
+
+        if (isStartupError(childResponse)) {
+          console.log(`    Skipping station ${station.name}: Start-up Error`);
+          continue;
+        }
+
+        const stationItemHtml = extractPanelHtml(childResponse, "itemPanel");
+
+        // Check if we got items
+        if (stationItemHtml && stationItemHtml.includes("cbo_nn_itemHover")) {
+          totalItems += await processItemPanel(
+            supabase,
+            stationData.id,
+            stationItemHtml,
+          );
+          continue;
+        }
+
+        // Maybe nested child units (sub-stations)
+        const nestedChildHtml = extractPanelHtml(
+          childResponse,
+          "childUnitsPanel",
+        );
+        const nestedStations = parseStations(nestedChildHtml);
+        if (nestedStations.length > 0) {
+          console.log(
+            `    Nested stations found: ${nestedStations.length}, drilling down...`,
+          );
+          for (const nested of nestedStations) {
+            const nestedResponse = await postWithRetry(
+              session,
+              "/Unit/SelectUnitFromChildUnitsList",
+              { unitOid: nested.unitOid },
+            );
+            if (isStartupError(nestedResponse)) continue;
+            const nestedItemHtml = extractPanelHtml(
+              nestedResponse,
+              "itemPanel",
+            );
+            if (nestedItemHtml && nestedItemHtml.includes("cbo_nn_itemHover")) {
+              totalItems += await processItemPanel(
+                supabase,
+                stationData.id,
+                nestedItemHtml,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Log scrape result
+    await supabase.from("scrape_logs").insert({
+      status: "success",
+      message: `Scraped ${totalItems} items from ${discoveredHalls.length} halls`,
+      items_count: totalItems,
+    });
+
+    console.log(`\nScrape complete: ${totalItems} items total`);
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        message: `Scraped ${totalItems} items from ${discoveredHalls.length} dining halls`,
+        itemsCount: totalItems,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
   } catch (error) {
-    console.error('Scrape failed; falling back to cache', error);
-    if (cached) return new Response(JSON.stringify(cached), { headers: { ...corsHeaders, 'content-type': 'application/json' } });
-    return new Response(JSON.stringify({ error: 'Scrape failed and cache missing' }), { status: 502, headers: { ...corsHeaders, 'content-type': 'application/json' } });
+    console.error("Scrape error:", error);
+
+    try {
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, serviceKey);
+      await supabase.from("scrape_logs").insert({
+        status: "error",
+        message: error instanceof Error ? error.message : "Unknown error",
+      });
+    } catch (_) {
+      // ignore logging error
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : "Scrape failed",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      },
+    );
   }
 });
