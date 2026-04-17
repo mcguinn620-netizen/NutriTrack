@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { spacing, typography, borderRadius } from '@/constants/theme';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getFavoriteFoodItemIds, toggleFavoriteFoodItem } from '@/services/favoritesService';
-import { FoodItem, getFoodItemsByIds } from '@/services/netNutritionService';
+import { getFoodItemsByIds } from '@/services/netNutritionService';
+import { FoodItem } from '@/services/nutritionTypes';
 import { MealCategory } from '@/services/mealLogService';
 import { useTray } from '@/components/tray/TrayContext';
 

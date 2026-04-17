@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FoodItem } from '@/services/netNutritionService';
+import { FoodItem } from '@/services/nutritionTypes';
 
 const MEAL_LOG_KEY = '@meal_log_entries_v1';
 

@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/services/supabaseClient';
+import { DiningHall, FoodItem, MenuCategory, Station } from '@/services/nutritionTypes';
 
 const cache = new Map<string, { data: unknown; timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 7 days
@@ -24,55 +25,6 @@ export interface NetNutritionResult<T> {
 
 interface QueryOptions {
   forceRefresh?: boolean;
-}
-
-export interface DiningHall {
-  id: string;
-  name: string;
-  created_at?: string | null;
-}
-
-export interface Station {
-  id: string;
-  name: string;
-  hall_id?: string | null;
-  dining_hall_id?: string | null;
-  created_at?: string | null;
-  dining_hall?: DiningHall | null;
-}
-
-export interface MenuCategory {
-  id: string;
-  name: string;
-  station_id?: string | null;
-  display_order?: number | null;
-  created_at?: string | null;
-  station?: Station | null;
-}
-
-export interface FoodItem {
-  id: string;
-  name: string;
-  station_id: string;
-  category_id?: string | null;
-  calories?: number | null;
-  serving_size: string;
-  ingredients?: string[] | null;
-  allergens: string[];
-  traits: string[];
-  dietary_flags: string[];
-  nutrients: Record<string, unknown>;
-  micronutrients?: Record<string, unknown> | null;
-  created_at?: string | null;
-  updated_at?: string | null;
-  station?: {
-    id: string;
-    name: string;
-  } | null;
-  dining_hall?: {
-    id: string;
-    name: string;
-  } | null;
 }
 
 function isExpired(timestamp: number): boolean {
@@ -595,46 +547,6 @@ export async function getFoodItemsByCategoryResult(
     },
     options,
   );
-}
-
-export async function getDiningHalls(options?: QueryOptions): Promise<DiningHall[]> {
-  const result = await getDiningHallsResult(options);
-  return result.data;
-}
-
-export async function getStations(options?: QueryOptions): Promise<Station[]> {
-  const result = await getStationsResult(options);
-  return result.data;
-}
-
-export async function getStationsByHall(hallId: string, options?: QueryOptions): Promise<Station[]> {
-  const result = await getStationsByHallResult(hallId, options);
-  return result.data;
-}
-
-export async function getMenuCategories(options?: QueryOptions): Promise<MenuCategory[]> {
-  const result = await getMenuCategoriesResult(options);
-  return result.data;
-}
-
-export async function getFoodItems(options?: QueryOptions): Promise<FoodItem[]> {
-  const result = await getFoodItemsResult(options);
-  return result.data;
-}
-
-export async function getFoodItemsByHall(hallId: string, options?: QueryOptions): Promise<FoodItem[]> {
-  const result = await getFoodItemsByHallResult(hallId, options);
-  return result.data;
-}
-
-export async function getFoodItemsByStation(stationId: string, options?: QueryOptions): Promise<FoodItem[]> {
-  const result = await getFoodItemsByStationResult(stationId, options);
-  return result.data;
-}
-
-export async function getFoodItemsByCategory(categoryId: string, options?: QueryOptions): Promise<FoodItem[]> {
-  const result = await getFoodItemsByCategoryResult(categoryId, options);
-  return result.data;
 }
 
 export async function triggerScrape(): Promise<boolean> {

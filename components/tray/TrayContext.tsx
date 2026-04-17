@@ -1,6 +1,6 @@
 import React, { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { FoodItem } from '@/services/netNutritionService';
+import { FoodItem } from '@/services/nutritionTypes';
 import { MealCategory, mealLogService } from '@/services/mealLogService';
 
 const TRAY_KEY = '@tray_entries_v1';
