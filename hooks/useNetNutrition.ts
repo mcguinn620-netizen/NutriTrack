@@ -6,6 +6,7 @@ import {
   getDiningHallsResult,
   getFoodItemsByStationResult,
   getStationsByHallResult,
+  triggerScrape,
 } from '@/services/netNutritionService';
 
 function resolveErrorMessage(err: unknown, fallback: string): string {
@@ -99,7 +100,12 @@ export function useDiningHalls() {
     await load({ forceRefresh: true });
   }, [load]);
 
-  return { ...state, refresh };
+  const runScrape = useCallback(async () => {
+    await triggerScrape();
+    await load({ forceRefresh: true });
+  }, [load]);
+
+  return { ...state, refresh, runScrape };
 }
 
 export function useStations(hallId?: string) {

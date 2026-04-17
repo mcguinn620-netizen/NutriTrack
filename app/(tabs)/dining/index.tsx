@@ -25,7 +25,7 @@ export default function DiningHallsScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { data: diningHalls, loading, refreshing, error, refresh, lastUpdated, isOfflineFallback } = useDiningHalls();
+  const { data: diningHalls, loading, refreshing, error, refresh, runScrape, lastUpdated, isOfflineFallback } = useDiningHalls();
 
   const lastUpdatedLabel = formatLastUpdated(lastUpdated);
   const isRefreshing = refreshing || loading;
@@ -55,6 +55,20 @@ export default function DiningHallsScreen() {
           ]}
         >
           <Text style={styles.refreshButtonText}>{isRefreshing ? 'Refreshing...' : 'Refresh from Database'}</Text>
+        </Pressable>
+        <Pressable
+          onPress={runScrape}
+          disabled={isRefreshing}
+          style={({ pressed }) => [
+            styles.scrapeButton,
+            {
+              backgroundColor: pressed ? colors.surfaceHover : colors.surface,
+              borderColor: colors.border,
+              opacity: isRefreshing ? 0.6 : 1,
+            },
+          ]}
+        >
+          <Text style={[styles.scrapeButtonText, { color: colors.text }]}>Run Scraper</Text>
         </Pressable>
       </View>
 
@@ -146,6 +160,15 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   refreshButtonText: { ...typography.bodySmall, color: '#ffffff', fontWeight: '700' },
+  scrapeButton: {
+    marginTop: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    alignSelf: 'flex-start',
+  },
+  scrapeButtonText: { ...typography.bodySmall, fontWeight: '700' },
   listContent: { paddingBottom: spacing.lg },
   card: { marginHorizontal: spacing.lg, marginBottom: spacing.sm },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
